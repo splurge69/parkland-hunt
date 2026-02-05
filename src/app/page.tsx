@@ -1471,7 +1471,7 @@ export default function Home() {
         <div className="text-center mb-8">
           <h1 className="text-5xl font-extrabold mb-3 text-[#2D6A4F]">📸 Photo Hunt</h1>
           <p className="text-lg text-[#1B1B1B] mb-2">
-            The photo scavenger hunt game to play while walking with friends.
+            The scavenger game to play while walking with friends.
           </p>
           <p className="text-[#6B7280]">
             Submit your photos and vote for your favourites!
