@@ -560,6 +560,31 @@ export default function Home() {
   }, [huntId]);
 
   // --------------------------
+  // Poll hunt status when player has finished but hunt is still active
+  // Fallback for when Realtime subscription misses the status change
+  // --------------------------
+  useEffect(() => {
+    if (!huntId || !finishedAt || hunt?.status !== "active") return;
+
+    console.log("[Polling] Player finished but hunt still active, starting poll");
+
+    const interval = setInterval(async () => {
+      const { data } = await supabase
+        .from("hunts")
+        .select("status")
+        .eq("id", huntId)
+        .single();
+
+      if (data && data.status !== "active") {
+        console.log("[Polling] Hunt status changed to:", data.status);
+        setHunt((prev) => (prev ? { ...prev, status: data.status } : null));
+      }
+    }, 3000); // Poll every 3 seconds
+
+    return () => clearInterval(interval);
+  }, [huntId, finishedAt, hunt?.status]);
+
+  // --------------------------
   // Load prompts for this hunt (via hunt.pack)
   // --------------------------
   useEffect(() => {
@@ -1222,6 +1247,9 @@ export default function Home() {
 
     setFinishedAt(now);
 
+    // Brief delay to allow database writes to propagate before checking
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
     // Check if all players have finished - if so, transition to voting
     const { data: allPlayers, error: playersError } = await supabase
       .from("hunt_players")
@@ -1245,6 +1273,10 @@ export default function Home() {
 
     const uniquePlayersArray = Array.from(uniquePlayers.values());
     const allFinished = uniquePlayersArray.every((p) => p.finished_at != null);
+    
+    console.log("[Voting Transition] Checking players:", uniquePlayersArray);
+    console.log("[Voting Transition] All finished?", allFinished, "Player count:", uniquePlayersArray.length);
+    
     if (allFinished && uniquePlayersArray.length > 0) {
       // Check if voting is meaningful (multiple users submitted to same prompts)
       const { data: submissionsCheck } = await supabase
@@ -1265,7 +1297,10 @@ export default function Home() {
         (players) => players.size >= 2
       );
 
+      console.log("[Voting Transition] Has votable prompts?", hasVotablePrompts);
+
       if (!hasVotablePrompts) {
+        console.log("[Voting Transition] Skipping voting, going to finished");
         // Skip voting, go straight to finished
         const { error: finishError } = await supabase
           .from("hunts")
@@ -1282,6 +1317,7 @@ export default function Home() {
       }
 
       // Transition hunt to voting phase
+      console.log("[Voting Transition] Transitioning to voting phase");
       const { error: statusError } = await supabase
         .from("hunts")
         .update({ status: "voting" })
@@ -1292,6 +1328,7 @@ export default function Home() {
         return;
       }
 
+      console.log("[Voting Transition] Successfully transitioned to voting");
       // Update local state
       setHunt((prev) => (prev ? { ...prev, status: "voting" } : prev));
     }
