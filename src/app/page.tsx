@@ -1451,9 +1451,10 @@ export default function Home() {
         <div className="text-center mb-8">
           <h1 className="text-5xl font-extrabold mb-3 text-[#2D6A4F]">📸 Photo Hunt</h1>
           <p className="text-lg text-[#1B1B1B] mb-2">
-            The photo scavenger hunt for walking with friends.
+            The photo scavenger hunt to play walking with friends.
           </p>
           <p className="text-[#6B7280]">Loading...</p>
+          <p className="text-xs text-gray-400 mt-4">v: {process.env.NEXT_PUBLIC_COMMIT_SHA?.slice(0, 7)}</p>
         </div>
       </main>
     );
@@ -1469,7 +1470,7 @@ export default function Home() {
         <div className="text-center mb-8">
           <h1 className="text-5xl font-extrabold mb-3 text-[#2D6A4F]">📸 Photo Hunt</h1>
           <p className="text-lg text-[#1B1B1B] mb-2">
-            The photo scavenger hunt for walking with friends.
+            The photo scavenger hunt game to play while walking with friends.
           </p>
           <p className="text-[#6B7280]">
             Submit your photos and vote for your favourites!
@@ -1662,6 +1663,10 @@ export default function Home() {
             </div>
           </div>
         )}
+
+        <div className="mt-8 text-center text-xs text-gray-400">
+          v: {process.env.NEXT_PUBLIC_COMMIT_SHA?.slice(0, 7)}
+        </div>
       </main>
     );
   }
@@ -1675,6 +1680,7 @@ export default function Home() {
         <div className="text-center py-12">
           <div className="text-4xl mb-4">Loading...</div>
           <div className="text-[#6B7280]">Fetching hunt data</div>
+          <div className="mt-4 text-xs text-gray-400">v: {process.env.NEXT_PUBLIC_COMMIT_SHA?.slice(0, 7)}</div>
         </div>
       </main>
     );
@@ -1840,6 +1846,7 @@ export default function Home() {
             >
               🚀 Start Game
             </button>
+            <div className="mt-2 text-center text-xs text-gray-400">v: {process.env.NEXT_PUBLIC_COMMIT_SHA?.slice(0, 7)}</div>
           </div>
         </div>
       </main>
@@ -1866,6 +1873,7 @@ export default function Home() {
           >
             View Results
           </button>
+          <div className="mt-4 text-center text-xs text-gray-400">v: {process.env.NEXT_PUBLIC_COMMIT_SHA?.slice(0, 7)}</div>
         </main>
       );
     }
@@ -1951,6 +1959,8 @@ export default function Home() {
             Skip this prompt →
           </button>
         </div>
+
+        <div className="mt-4 text-center text-xs text-gray-400">v: {process.env.NEXT_PUBLIC_COMMIT_SHA?.slice(0, 7)}</div>
       </main>
     );
   }
@@ -2075,6 +2085,8 @@ export default function Home() {
             >
               🏠 Return Home
             </button>
+
+            <div className="mt-4 text-center text-xs text-gray-400">v: {process.env.NEXT_PUBLIC_COMMIT_SHA?.slice(0, 7)}</div>
           </>
         )}
       </main>
@@ -2280,6 +2292,7 @@ export default function Home() {
               ↩️ Undo Finish
             </button>
           )}
+          <div className="mt-2 text-center text-xs text-gray-400">v: {process.env.NEXT_PUBLIC_COMMIT_SHA?.slice(0, 7)}</div>
         </div>
       </div>
     </main>
