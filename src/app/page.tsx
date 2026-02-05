@@ -177,6 +177,9 @@ export default function Home() {
   // upload flow
   const [activePromptId, setActivePromptId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  
+  // Prevent race conditions when joining hunts
+  const joiningHuntRef = useRef(false);
 
   // Helper to get pack name from slug, with fallback to formatted slug
   function getPackName(slug: string | null): string {
@@ -405,52 +408,60 @@ export default function Home() {
   // --------------------------
   useEffect(() => {
     if (!huntId || !playerId) return;
+    
+    // Prevent concurrent join attempts (race condition)
+    if (joiningHuntRef.current) return;
+    joiningHuntRef.current = true;
 
     (async () => {
-      // Check if already joined (to avoid overwriting host role)
-      const { data: existing } = await supabase
-        .from("hunt_players")
-        .select("id, finished_at, role")
-        .eq("hunt_id", huntId)
-        .eq("player_id", playerId)
-        .single();
-
-      if (!existing) {
-        // Use upsert to handle race conditions (requires unique constraint on hunt_id, player_id)
-        const { error: upsertError } = await supabase
+      try {
+        // Check if already joined (to avoid overwriting host role)
+        const { data: existing } = await supabase
           .from("hunt_players")
-          .upsert(
-            {
-              hunt_id: huntId,
-              player_id: playerId,
-              display_name: playerName || "Anonymous",
-              role: "player",
-            },
-            { onConflict: "hunt_id,player_id", ignoreDuplicates: true }
-          );
+          .select("id, finished_at, role")
+          .eq("hunt_id", huntId)
+          .eq("player_id", playerId)
+          .single();
 
-        if (upsertError) {
-          console.error("Failed to join hunt:", upsertError);
-          setError(upsertError.message);
+        if (!existing) {
+          // Use upsert to handle race conditions (requires unique constraint on hunt_id, player_id)
+          const { error: upsertError } = await supabase
+            .from("hunt_players")
+            .upsert(
+              {
+                hunt_id: huntId,
+                player_id: playerId,
+                display_name: playerName || "Anonymous",
+                role: "player",
+              },
+              { onConflict: "hunt_id,player_id", ignoreDuplicates: true }
+            );
+
+          if (upsertError) {
+            console.error("Failed to join hunt:", upsertError);
+            setError(upsertError.message);
+            return;
+          }
+        }
+
+        // Always fetch fresh data to ensure we have the correct state
+        const { data: playerData, error: fetchError } = await supabase
+          .from("hunt_players")
+          .select("finished_at, role")
+          .eq("hunt_id", huntId)
+          .eq("player_id", playerId)
+          .single();
+
+        if (fetchError) {
+          console.error("Failed to load player data:", fetchError);
           return;
         }
+
+        setFinishedAt(playerData?.finished_at ?? null);
+        setIsHost(playerData?.role === "host");
+      } finally {
+        joiningHuntRef.current = false;
       }
-
-      // Always fetch fresh data to ensure we have the correct state
-      const { data: playerData, error: fetchError } = await supabase
-        .from("hunt_players")
-        .select("finished_at, role")
-        .eq("hunt_id", huntId)
-        .eq("player_id", playerId)
-        .single();
-
-      if (fetchError) {
-        console.error("Failed to load player data:", fetchError);
-        return;
-      }
-
-      setFinishedAt(playerData?.finished_at ?? null);
-      setIsHost(playerData?.role === "host");
     })();
   }, [huntId, playerId]);
 
@@ -1149,7 +1160,7 @@ export default function Home() {
     // Check if all players have finished - if so, transition to voting
     const { data: allPlayers, error: playersError } = await supabase
       .from("hunt_players")
-      .select("finished_at")
+      .select("player_id, finished_at")
       .eq("hunt_id", huntId);
 
     if (playersError) {
@@ -1157,8 +1168,19 @@ export default function Home() {
       return;
     }
 
-    const allFinished = allPlayers?.every((p) => p.finished_at != null);
-    if (allFinished && allPlayers && allPlayers.length > 0) {
+    // Deduplicate by player_id (in case of duplicate entries)
+    // Keep the entry with finished_at set if any exists for that player
+    const uniquePlayers = new Map<string, { player_id: string; finished_at: string | null }>();
+    allPlayers?.forEach((p: { player_id: string; finished_at: string | null }) => {
+      const existing = uniquePlayers.get(p.player_id);
+      if (!existing || (p.finished_at && !existing.finished_at)) {
+        uniquePlayers.set(p.player_id, p);
+      }
+    });
+
+    const uniquePlayersArray = Array.from(uniquePlayers.values());
+    const allFinished = uniquePlayersArray.every((p) => p.finished_at != null);
+    if (allFinished && uniquePlayersArray.length > 0) {
       // Check if voting is meaningful (multiple users submitted to same prompts)
       const { data: submissionsCheck } = await supabase
         .from("submissions")
