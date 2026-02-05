@@ -181,6 +181,9 @@ export default function Home() {
   
   // Prevent race conditions when joining hunts
   const joiningHuntRef = useRef(false);
+  
+  // Prevent race conditions when creating players
+  const creatingPlayerRef = useRef(false);
 
   // Helper to get pack name from slug, with fallback to formatted slug
   function getPackName(slug: string | null): string {
@@ -246,12 +249,13 @@ export default function Home() {
   // --------------------------
   useEffect(() => {
     const storedHuntId = localStorage.getItem("hunt_id");
-    if (storedHuntId) setHuntId(storedHuntId);
-
     const storedPlayerId = localStorage.getItem("player_id");
-    if (storedPlayerId) setPlayerId(storedPlayerId);
-
     const storedPlayerName = localStorage.getItem("player_name");
+    
+    console.log("[Boot] localStorage:", { storedHuntId, storedPlayerId, storedPlayerName });
+    
+    if (storedHuntId) setHuntId(storedHuntId);
+    if (storedPlayerId) setPlayerId(storedPlayerId);
     if (storedPlayerName) setPlayerName(storedPlayerName);
   }, []);
 
@@ -259,23 +263,57 @@ export default function Home() {
   // Ensure player exists (FK-safe)
   // --------------------------
   useEffect(() => {
-    if (playerId) return;
-
+    if (creatingPlayerRef.current) {
+      console.log("[Player] Skipping - already creating");
+      return;
+    }
+    
     (async () => {
-      const { data, error } = await supabase
-        .from("players")
-        .insert({ name: "anon" })
-        .select("id")
-        .single();
-
-      if (error) {
-        console.error("Failed to create player:", error);
-        setError(error.message);
-        return;
+      // If we have a playerId, verify it exists in the database
+      if (playerId) {
+        console.log("[Player] Verifying existing player:", playerId);
+        const { data: existingPlayer } = await supabase
+          .from("players")
+          .select("id")
+          .eq("id", playerId)
+          .single();
+        
+        if (existingPlayer) {
+          console.log("[Player] Verified - player exists");
+          return;
+        }
+        console.log("[Player] Player not found in DB, creating new one");
+        // Player doesn't exist in DB, need to create a new one
+        // Also clear hunt_id since new player wouldn't be in that hunt
+        localStorage.removeItem("player_id");
+        localStorage.removeItem("hunt_id");
+        setHuntId(null);
+        setHunt(null);
       }
+      
+      // Prevent concurrent creation
+      creatingPlayerRef.current = true;
+      console.log("[Player] Creating new player...");
+      
+      try {
+        const { data, error } = await supabase
+          .from("players")
+          .insert({ name: "anon" })
+          .select("id")
+          .single();
 
-      localStorage.setItem("player_id", data.id);
-      setPlayerId(data.id);
+        if (error) {
+          console.error("Failed to create player:", error);
+          setError(error.message);
+          return;
+        }
+
+        console.log("[Player] Created new player:", data.id);
+        localStorage.setItem("player_id", data.id);
+        setPlayerId(data.id);
+      } finally {
+        creatingPlayerRef.current = false;
+      }
     })();
   }, [playerId]);
 
@@ -414,6 +452,8 @@ export default function Home() {
     // Prevent concurrent join attempts (race condition)
     if (joiningHuntRef.current) return;
     joiningHuntRef.current = true;
+    
+    console.log("[Hunt Join] Attempting to join/verify membership:", { huntId, playerId });
 
     (async () => {
       try {
@@ -426,6 +466,7 @@ export default function Home() {
           .single();
 
         if (!existing) {
+          console.log("[Hunt Join] Not a member, joining as player");
           // Use upsert to handle race conditions (requires unique constraint on hunt_id, player_id)
           const { error: upsertError } = await supabase
             .from("hunt_players")
@@ -444,6 +485,8 @@ export default function Home() {
             setError(upsertError.message);
             return;
           }
+        } else {
+          console.log("[Hunt Join] Already a member:", existing);
         }
 
         // Always fetch fresh data to ensure we have the correct state
