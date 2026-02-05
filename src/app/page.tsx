@@ -897,6 +897,26 @@ export default function Home() {
   }
 
   // --------------------------
+  // Boot player (host only)
+  // --------------------------
+  async function bootPlayer(huntPlayerId: string) {
+    if (!huntId || !isHost) return;
+
+    const { error } = await supabase
+      .from("hunt_players")
+      .delete()
+      .eq("id", huntPlayerId);
+
+    if (error) {
+      setError(error.message);
+      return;
+    }
+
+    // Update local state immediately
+    setHuntPlayers((prev) => prev.filter((p) => p.id !== huntPlayerId));
+  }
+
+  // --------------------------
   // Load all submissions for voting phase
   // --------------------------
   useEffect(() => {
@@ -1557,6 +1577,14 @@ export default function Home() {
                             }}
                           >
                             Edit
+                          </button>
+                        )}
+                        {isHost && !isCurrentPlayer && p.role !== "host" && (
+                          <button
+                            className="text-xs text-red-500 hover:text-red-700 hover:underline font-medium"
+                            onClick={() => bootPlayer(p.id)}
+                          >
+                            Boot
                           </button>
                         )}
                         {p.role === "host" && (
