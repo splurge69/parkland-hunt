@@ -52,6 +52,7 @@ type Pack = {
   longitude: number | null;
   radius_km: number | null;
   area: string | null;
+  category: string | null;
 };
 
 type Submission = {
@@ -330,7 +331,8 @@ export default function Home() {
     (async () => {
       const { data, error } = await supabase
         .from("packs")
-        .select("slug, name, description, latitude, longitude, radius_km, area")
+        .select("slug, name, description, latitude, longitude, radius_km, area, category")
+        .order("category")
         .order("name");
 
       if (error) {
@@ -1315,10 +1317,17 @@ export default function Home() {
               value={createPack}
               onChange={(e) => setCreatePack(e.target.value)}
             >
-              {availablePacks.map((p) => (
-                <option key={p.slug} value={p.slug}>
-                  {p.name}
-                </option>
+              {/* Group packs by category */}
+              {Array.from(new Set(availablePacks.map(p => p.category))).map((category) => (
+                <optgroup key={category ?? "uncategorized"} label={category ?? "Other"}>
+                  {availablePacks
+                    .filter(p => p.category === category)
+                    .map((p) => (
+                      <option key={p.slug} value={p.slug}>
+                        {p.name}
+                      </option>
+                    ))}
+                </optgroup>
               ))}
             </select>
             <button 
