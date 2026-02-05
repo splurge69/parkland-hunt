@@ -15,6 +15,7 @@ type Hunt = {
   pack: string | null;
   completion_mode: "anytime" | "all_required" | null;
   required_prompt_count: number | null;
+  status: "lobby" | "active" | "finished";
 };
 
 type SubmissionStatus =
@@ -24,6 +25,14 @@ type SubmissionStatus =
   | "uploading"
   | "saved"
   | "error";
+
+type HuntPlayer = {
+  id: string;
+  player_id: string;
+  display_name: string | null;
+  finished_at: string | null;
+  role: string | null;
+};
 
 function getFileExt(name: string) {
   const parts = name.split(".");
@@ -107,6 +116,12 @@ export default function Home() {
   // Finish state
   const [finishedAt, setFinishedAt] = useState<string | null>(null);
 
+  // Hunt players (for showing who's in the hunt)
+  const [huntPlayers, setHuntPlayers] = useState<HuntPlayer[]>([]);
+
+  // Host status (for controlling game start)
+  const [isHost, setIsHost] = useState(false);
+
   // upload flow
   const [activePromptId, setActivePromptId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -184,7 +199,7 @@ export default function Home() {
     (async () => {
       const { data, error } = await supabase
         .from("hunts")
-        .select("id, code, pack, completion_mode, required_prompt_count")
+        .select("id, code, pack, completion_mode, required_prompt_count, status")
         .eq("id", huntId)
         .single();
 
@@ -199,47 +214,136 @@ export default function Home() {
   }, [huntId]);
 
   // --------------------------
+  // Real-time subscription for hunt status changes
+  // --------------------------
+  useEffect(() => {
+    if (!huntId) return;
+
+    const channel = supabase
+      .channel(`hunt-${huntId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "hunts",
+          filter: `id=eq.${huntId}`,
+        },
+        (payload) => {
+          // Update hunt state with new data
+          setHunt((prev) => (prev ? { ...prev, ...payload.new } as Hunt : null));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [huntId]);
+
+  // --------------------------
   // Ensure membership in hunt_players, and load finished_at
   // --------------------------
   useEffect(() => {
     if (!huntId || !playerId) return;
 
     (async () => {
-      // join (idempotent)
-      const { error: upsertError } = await supabase
+      // Check if already joined (to avoid overwriting host role)
+      const { data: existing } = await supabase
         .from("hunt_players")
-        .upsert(
-          {
-            hunt_id: huntId,
-            player_id: playerId,
-            display_name: "anon",
-            role: "player",
-          },
-          { onConflict: "hunt_id,player_id" }
-        );
-
-      if (upsertError) {
-        console.error("Failed to upsert hunt_players:", upsertError);
-        setError(upsertError.message);
-        return;
-      }
-
-      // fetch finished_at
-      const { data, error } = await supabase
-        .from("hunt_players")
-        .select("finished_at")
+        .select("id, finished_at, role")
         .eq("hunt_id", huntId)
         .eq("player_id", playerId)
         .single();
 
+      // Only insert if not already a member
+      if (!existing) {
+        const { error: insertError } = await supabase
+          .from("hunt_players")
+          .insert({
+            hunt_id: huntId,
+            player_id: playerId,
+            display_name: "anon",
+            role: "player",
+          });
+
+        if (insertError) {
+          console.error("Failed to join hunt:", insertError);
+          setError(insertError.message);
+          return;
+        }
+
+        // Fetch the newly inserted row
+        const { data: newRow, error: fetchError } = await supabase
+          .from("hunt_players")
+          .select("finished_at, role")
+          .eq("hunt_id", huntId)
+          .eq("player_id", playerId)
+          .single();
+
+        if (fetchError) {
+          console.error("Failed to load player data:", fetchError);
+          return;
+        }
+
+        setFinishedAt(newRow?.finished_at ?? null);
+        setIsHost(newRow?.role === "host");
+      } else {
+        // Already a member, just use the existing data
+        setFinishedAt(existing.finished_at ?? null);
+        setIsHost(existing.role === "host");
+      }
+    })();
+  }, [huntId, playerId]);
+
+  // --------------------------
+  // Load all players in this hunt (with real-time updates)
+  // --------------------------
+  useEffect(() => {
+    if (!huntId) {
+      setHuntPlayers([]);
+      return;
+    }
+
+    // Initial fetch
+    async function fetchPlayers() {
+      const { data, error } = await supabase
+        .from("hunt_players")
+        .select("id, player_id, display_name, finished_at, role")
+        .eq("hunt_id", huntId);
+
       if (error) {
-        console.error("Failed to load finished_at:", error);
+        console.error("Failed to load hunt players:", error);
         return;
       }
 
-      setFinishedAt((data as any)?.finished_at ?? null);
-    })();
-  }, [huntId, playerId]);
+      setHuntPlayers((data ?? []) as HuntPlayer[]);
+    }
+
+    fetchPlayers();
+
+    // Real-time subscription for player changes
+    const channel = supabase
+      .channel(`hunt-players-${huntId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "hunt_players",
+          filter: `hunt_id=eq.${huntId}`,
+        },
+        () => {
+          // Refetch all players on any change
+          fetchPlayers();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [huntId]);
 
   // --------------------------
   // Load prompts for this hunt (via hunt.pack)
@@ -354,7 +458,7 @@ export default function Home() {
 
     const code = generateCode(5);
 
-    // Create hunt
+    // Create hunt (starts in lobby)
     const { data: huntRow, error: huntError } = await supabase
       .from("hunts")
       .insert({
@@ -364,7 +468,7 @@ export default function Home() {
         required_prompt_count,
         // keep title deprecated but safe if column exists / non-null:
         title: `${pack} hunt`,
-        status: "active",
+        status: "lobby",
       } as any)
       .select("id")
       .single();
@@ -400,6 +504,25 @@ export default function Home() {
       }
     }
 
+    // Join as host
+    const { error: hostErr } = await supabase
+      .from("hunt_players")
+      .upsert(
+        {
+          hunt_id: newHuntId,
+          player_id: playerId,
+          display_name: "anon",
+          role: "host",
+        },
+        { onConflict: "hunt_id,player_id" }
+      );
+
+    if (hostErr) {
+      setError(hostErr.message);
+      return;
+    }
+
+    setIsHost(true);
     localStorage.setItem("hunt_id", newHuntId);
     setHuntId(newHuntId);
 
@@ -417,6 +540,8 @@ export default function Home() {
     setPhotoPathByPromptId({});
     setPhotoUrlByPromptId({});
     setFinishedAt(null);
+    setHuntPlayers([]);
+    setIsHost(false);
   }
 
   // --------------------------
@@ -514,6 +639,32 @@ export default function Home() {
     () => prompts.reduce((acc, p) => acc + (photoPathByPromptId[p.id] ? 1 : 0), 0),
     [prompts, photoPathByPromptId]
   );
+
+  // --------------------------
+  // Player stats
+  // --------------------------
+  const playerCount = huntPlayers.length;
+  const finishedCount = useMemo(
+    () => huntPlayers.filter((p) => p.finished_at != null).length,
+    [huntPlayers]
+  );
+
+  // --------------------------
+  // Start game (host only)
+  // --------------------------
+  async function startGame() {
+    if (!huntId || !isHost) return;
+
+    const { error } = await supabase
+      .from("hunts")
+      .update({ status: "active" })
+      .eq("id", huntId);
+
+    if (error) {
+      setError(error.message);
+    }
+    // No need to setHunt here - real-time subscription will update it
+  }
 
   // --------------------------
   // Finish / Undo (persisted in hunt_players.finished_at)
@@ -627,6 +778,92 @@ export default function Home() {
     );
   }
 
+  // --------------------------
+  // Lobby / Waiting Room UI
+  // --------------------------
+  if (hunt?.status === "lobby") {
+    return (
+      <main className="p-6 max-w-xl mx-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-4xl font-bold">Waiting Room</h1>
+          <button className="text-sm underline text-gray-600" onClick={changeHunt}>
+            Leave
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 border border-red-300 text-red-700">
+            Error: {error}
+          </div>
+        )}
+
+        {/* Share code */}
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded text-center">
+          <div className="text-sm text-blue-700 mb-1">
+            Share this code with friends
+          </div>
+          <div className="text-4xl font-mono font-bold text-blue-900 tracking-widest">
+            {hunt.code}
+          </div>
+        </div>
+
+        {/* Pack info */}
+        {hunt.pack && (
+          <div className="mb-6 p-4 bg-gray-50 rounded border">
+            <div className="text-sm text-gray-500 mb-1">Pack</div>
+            <div className="text-lg font-semibold">{packLabel(hunt.pack)}</div>
+            <div className="text-sm text-gray-400">{prompts.length} prompts</div>
+          </div>
+        )}
+
+        {/* Players list */}
+        <div className="mb-6">
+          <div className="text-sm text-gray-500 mb-2">
+            Players ({playerCount})
+          </div>
+          <div className="space-y-2">
+            {huntPlayers.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between p-3 bg-white border rounded"
+              >
+                <span className="font-medium">
+                  {p.display_name || "Anonymous"}
+                </span>
+                {p.role === "host" && (
+                  <span className="text-xs px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full">
+                    Host
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Start button or waiting message */}
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t">
+          <div className="max-w-xl mx-auto p-4">
+            {isHost ? (
+              <button
+                className="w-full py-4 bg-green-600 text-white rounded font-semibold text-lg"
+                onClick={startGame}
+              >
+                Start Game
+              </button>
+            ) : (
+              <div className="text-center py-4 text-gray-500">
+                Waiting for host to start the game...
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // --------------------------
+  // Active Hunt UI
+  // --------------------------
   return (
     <main className="p-6 max-w-xl mx-auto">
       <div className="flex items-center justify-between mb-4">
@@ -636,10 +873,54 @@ export default function Home() {
         </button>
       </div>
 
+      {/* Hunt code for sharing */}
+      {hunt?.code && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
+          <div className="text-sm text-blue-700">
+            Share this code with friends:
+          </div>
+          <div className="text-2xl font-mono font-bold text-blue-900 tracking-wider">
+            {hunt.code}
+          </div>
+        </div>
+      )}
+
       {hunt?.pack && (
         <div className="text-sm text-gray-600 mb-4">
           Pack: <span className="font-medium text-gray-900">{packLabel(hunt.pack)}</span>{" "}
           <span className="text-gray-400">({hunt.pack})</span>
+        </div>
+      )}
+
+      {/* Players in hunt */}
+      {playerCount > 0 && (
+        <div className="mb-4 p-3 bg-gray-50 rounded border">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-600">
+              <span className="font-medium text-gray-900">{playerCount}</span>{" "}
+              {playerCount === 1 ? "player" : "players"} in hunt
+            </span>
+            <span className="text-gray-500">
+              {finishedCount} / {playerCount} finished
+            </span>
+          </div>
+          {huntPlayers.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {huntPlayers.map((p) => (
+                <span
+                  key={p.id}
+                  className={`text-xs px-2 py-1 rounded-full ${
+                    p.finished_at
+                      ? "bg-green-100 text-green-700"
+                      : "bg-gray-200 text-gray-600"
+                  }`}
+                >
+                  {p.display_name || "Anonymous"}
+                  {p.finished_at && " ✓"}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
