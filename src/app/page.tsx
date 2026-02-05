@@ -387,6 +387,7 @@ export default function Home() {
       const { data, error } = await supabase
         .from("packs")
         .select("slug, name, description, latitude, longitude, radius_km, area, category")
+        .eq("enabled", true)
         .order("category")
         .order("name");
 
