@@ -15,7 +15,7 @@ type Hunt = {
   pack: string | null;
   completion_mode: "anytime" | "all_required" | null;
   required_prompt_count: number | null;
-  status: "lobby" | "active" | "finished";
+  status: "lobby" | "active" | "voting" | "finished";
 };
 
 type SubmissionStatus =
@@ -37,11 +37,30 @@ type HuntPlayer = {
 type PlayerGame = {
   hunt_id: string;
   hunt_code: string;
-  hunt_status: "lobby" | "active" | "finished";
+  hunt_status: "lobby" | "active" | "voting" | "finished";
   pack: string | null;
   joined_at: string;
   finished_at: string | null;
   role: string | null;
+};
+
+type Pack = {
+  slug: string;
+  name: string;
+  description: string | null;
+};
+
+type Submission = {
+  id: string;
+  prompt_id: string;
+  player_id: string;
+  photo_path: string;
+  display_name: string;
+};
+
+type Vote = {
+  submission_id: string;
+  player_id: string;
 };
 
 function getFileExt(name: string) {
@@ -102,13 +121,14 @@ export default function Home() {
 
   // Player identity (device-local)
   const [playerId, setPlayerId] = useState<string | null>(null);
+  const [playerName, setPlayerName] = useState<string>("");
 
   // Hunt selection
   const [huntId, setHuntId] = useState<string | null>(null);
   const [hunt, setHunt] = useState<Hunt | null>(null);
 
   // Create/Join UI
-  const [availablePacks, setAvailablePacks] = useState<string[]>([]);
+  const [availablePacks, setAvailablePacks] = useState<Pack[]>([]);
   const [joinCode, setJoinCode] = useState("");
   const [createPack, setCreatePack] = useState<string>("");
   const [createCompletionMode, setCreateCompletionMode] = useState<"anytime" | "all_required">(
@@ -135,9 +155,79 @@ export default function Home() {
   // Player's game history
   const [playerGames, setPlayerGames] = useState<PlayerGame[]>([]);
 
+  // Name editing in lobby
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editingNameValue, setEditingNameValue] = useState("");
+
+  // Voting state
+  const [allSubmissions, setAllSubmissions] = useState<Submission[]>([]);
+  const [currentPromptIndex, setCurrentPromptIndex] = useState(0);
+  const [votedPromptIds, setVotedPromptIds] = useState<Set<string>>(new Set());
+  const [votingTimeLeft, setVotingTimeLeft] = useState(5);
+  const [submissionUrls, setSubmissionUrls] = useState<Record<string, string>>({});
+
+  // Results state
+  const [results, setResults] = useState<{
+    promptWinners: Array<{
+      prompt: Prompt;
+      winner: { display_name: string; votes: number; photo_url: string } | null;
+    }>;
+    leaderboard: Array<{ display_name: string; total_votes: number }>;
+  } | null>(null);
+
   // upload flow
   const [activePromptId, setActivePromptId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Helper to get pack name from slug, with fallback to formatted slug
+  function getPackName(slug: string | null): string {
+    if (!slug) return "Unknown Pack";
+    const pack = availablePacks.find((p) => p.slug === slug);
+    if (pack) return pack.name;
+    // Fallback: format slug nicely
+    return packLabel(slug);
+  }
+
+  // Helper to get pack description from slug
+  function getPackDescription(slug: string | null): string | null {
+    if (!slug) return null;
+    const pack = availablePacks.find((p) => p.slug === slug);
+    return pack?.description ?? null;
+  }
+
+  // Helper to save player name to localStorage
+  function savePlayerName(name: string) {
+    setPlayerName(name);
+    localStorage.setItem("player_name", name);
+  }
+
+  // Update display name in hunt_players table
+  async function updateDisplayName(newName: string) {
+    if (!huntId || !playerId) return;
+
+    const displayName = newName.trim() || "Anonymous";
+
+    const { error } = await supabase
+      .from("hunt_players")
+      .update({ display_name: displayName })
+      .eq("hunt_id", huntId)
+      .eq("player_id", playerId);
+
+    if (error) {
+      console.error("Failed to update display name:", error);
+      setError(error.message);
+      return;
+    }
+
+    // Update local state
+    savePlayerName(displayName);
+    setHuntPlayers((prev) =>
+      prev.map((p) =>
+        p.player_id === playerId ? { ...p, display_name: displayName } : p
+      )
+    );
+    setIsEditingName(false);
+  }
 
   // --------------------------
   // Boot: load local storage
@@ -148,6 +238,9 @@ export default function Home() {
 
     const storedPlayerId = localStorage.getItem("player_id");
     if (storedPlayerId) setPlayerId(storedPlayerId);
+
+    const storedPlayerName = localStorage.getItem("player_name");
+    if (storedPlayerName) setPlayerName(storedPlayerName);
   }, []);
 
   // --------------------------
@@ -220,27 +313,27 @@ export default function Home() {
   }, [playerId, huntId]);
 
   // --------------------------
-  // Load available packs from prompts
+  // Load available packs from packs table
   // --------------------------
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase.from("prompts").select("pack");
+      const { data, error } = await supabase
+        .from("packs")
+        .select("slug, name, description")
+        .order("name");
+
       if (error) {
         console.error("Failed to load packs:", error);
         setError(error.message);
         return;
       }
 
-      const packs = Array.from(
-        new Set((data ?? []).map((r: any) => r.pack).filter(Boolean))
-      ) as string[];
-
-      packs.sort((a, b) => a.localeCompare(b));
-
-      setAvailablePacks(packs);
+      setAvailablePacks(data ?? []);
 
       // default selection
-      if (!createPack && packs.length > 0) setCreatePack(packs[0]);
+      if (!createPack && data && data.length > 0) {
+        setCreatePack(data[0].slug);
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -321,7 +414,7 @@ export default function Home() {
           .insert({
             hunt_id: huntId,
             player_id: playerId,
-            display_name: "anon",
+            display_name: playerName || "Anonymous",
             role: "player",
           });
 
@@ -569,7 +662,7 @@ export default function Home() {
         {
           hunt_id: newHuntId,
           player_id: playerId,
-          display_name: "anon",
+          display_name: playerName || "Anonymous",
           role: "host",
         },
         { onConflict: "hunt_id,player_id" }
@@ -757,6 +850,286 @@ export default function Home() {
   }
 
   // --------------------------
+  // Load all submissions for voting phase
+  // --------------------------
+  useEffect(() => {
+    if (hunt?.status !== "voting" || !huntId) return;
+
+    (async () => {
+      // Get all submissions for this hunt with player display names
+      const { data, error } = await supabase
+        .from("submissions")
+        .select(`
+          id,
+          prompt_id,
+          player_id,
+          photo_path,
+          hunt_players!inner(display_name)
+        `)
+        .eq("hunt_id", huntId);
+
+      if (error) {
+        console.error("Failed to load submissions for voting:", error);
+        setError(error.message);
+        return;
+      }
+
+      // Transform the data to include display_name at the top level
+      const submissions: Submission[] = (data ?? []).map((s: Record<string, unknown>) => {
+        const huntPlayersJoined = s.hunt_players as unknown;
+        const displayNameValue = Array.isArray(huntPlayersJoined)
+          ? (huntPlayersJoined[0] as { display_name: string } | undefined)?.display_name
+          : (huntPlayersJoined as { display_name: string } | null)?.display_name;
+        return {
+          id: s.id as string,
+          prompt_id: s.prompt_id as string,
+          player_id: s.player_id as string,
+          photo_path: s.photo_path as string,
+          display_name: displayNameValue || "Anonymous",
+        };
+      });
+
+      setAllSubmissions(submissions);
+
+      // Load signed URLs for all submissions
+      const urls: Record<string, string> = {};
+      for (const submission of submissions) {
+        if (submission.photo_path) {
+          const { data: urlData } = await supabase.storage
+            .from("photos")
+            .createSignedUrl(submission.photo_path, 3600);
+          if (urlData?.signedUrl) {
+            urls[submission.id] = urlData.signedUrl;
+          }
+        }
+      }
+      setSubmissionUrls(urls);
+
+      // Reset voting state
+      setCurrentPromptIndex(0);
+      setVotedPromptIds(new Set());
+      setVotingTimeLeft(5);
+    })();
+  }, [hunt?.status, huntId]);
+
+  // --------------------------
+  // Voting timer
+  // --------------------------
+  useEffect(() => {
+    if (hunt?.status !== "voting") return;
+
+    const timer = setInterval(() => {
+      setVotingTimeLeft((prev) => {
+        if (prev <= 1) {
+          // Auto-advance to next prompt
+          handleVotingTimeout();
+          return 5;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [hunt?.status, currentPromptIndex]);
+
+  // --------------------------
+  // Load results when hunt is finished
+  // --------------------------
+  useEffect(() => {
+    if (hunt?.status !== "finished" || !huntId) return;
+
+    (async () => {
+      // Get all votes with submission and player info
+      const { data: votesData, error: votesError } = await supabase
+        .from("votes")
+        .select(`
+          id,
+          submission_id,
+          submissions!inner(
+            id,
+            prompt_id,
+            player_id,
+            photo_path,
+            hunt_players!inner(display_name)
+          )
+        `)
+        .eq("submissions.hunt_id", huntId);
+
+      if (votesError) {
+        console.error("Failed to load votes:", votesError);
+        // Try a simpler query approach
+      }
+
+      // Get all submissions for this hunt
+      const { data: submissionsData, error: submissionsError } = await supabase
+        .from("submissions")
+        .select(`
+          id,
+          prompt_id,
+          player_id,
+          photo_path,
+          hunt_players!inner(display_name)
+        `)
+        .eq("hunt_id", huntId);
+
+      if (submissionsError) {
+        console.error("Failed to load submissions for results:", submissionsError);
+        return;
+      }
+
+      // Get vote counts per submission
+      const { data: voteCountsData, error: voteCountsError } = await supabase
+        .from("votes")
+        .select("submission_id");
+
+      if (voteCountsError) {
+        console.error("Failed to load vote counts:", voteCountsError);
+        return;
+      }
+
+      // Count votes per submission
+      const voteCountMap: Record<string, number> = {};
+      (voteCountsData ?? []).forEach((v: { submission_id: string }) => {
+        voteCountMap[v.submission_id] = (voteCountMap[v.submission_id] || 0) + 1;
+      });
+
+      // Build prompt winners
+      const promptWinners: Array<{
+        prompt: Prompt;
+        winner: { display_name: string; votes: number; photo_url: string } | null;
+      }> = [];
+
+      // Build leaderboard (votes per player)
+      const playerVotes: Record<string, { display_name: string; total_votes: number }> = {};
+
+      // Load photo URLs
+      const photoUrls: Record<string, string> = {};
+      for (const sub of submissionsData ?? []) {
+        if (sub.photo_path) {
+          const { data: urlData } = await supabase.storage
+            .from("photos")
+            .createSignedUrl(sub.photo_path, 3600);
+          if (urlData?.signedUrl) {
+            photoUrls[sub.id] = urlData.signedUrl;
+          }
+        }
+
+        // Track votes per player
+        const huntPlayersData = sub.hunt_players as unknown;
+        const displayNameForPlayer = Array.isArray(huntPlayersData)
+          ? (huntPlayersData[0] as { display_name: string } | undefined)?.display_name
+          : (huntPlayersData as { display_name: string } | null)?.display_name;
+        const playerDisplayName = displayNameForPlayer || "Anonymous";
+        const votes = voteCountMap[sub.id] || 0;
+        
+        if (!playerVotes[sub.player_id]) {
+          playerVotes[sub.player_id] = { display_name: playerDisplayName, total_votes: 0 };
+        }
+        playerVotes[sub.player_id].total_votes += votes;
+      }
+
+      // Find winner for each prompt
+      for (const prompt of prompts) {
+        const promptSubs = (submissionsData ?? []).filter(
+          (s: { prompt_id: string }) => s.prompt_id === prompt.id
+        );
+        
+        let maxVotes = 0;
+        let winner = null;
+
+        for (const sub of promptSubs) {
+          const votes = voteCountMap[sub.id] || 0;
+          const huntPlayersDataForSub = sub.hunt_players as unknown;
+          const subDisplayName = Array.isArray(huntPlayersDataForSub)
+            ? (huntPlayersDataForSub[0] as { display_name: string } | undefined)?.display_name
+            : (huntPlayersDataForSub as { display_name: string } | null)?.display_name;
+          const winnerDisplayName = subDisplayName || "Anonymous";
+          
+          if (votes > maxVotes) {
+            maxVotes = votes;
+            winner = {
+              display_name: winnerDisplayName,
+              votes,
+              photo_url: photoUrls[sub.id] || "",
+            };
+          }
+        }
+
+        promptWinners.push({ prompt, winner });
+      }
+
+      // Sort leaderboard by total votes
+      const leaderboard = Object.values(playerVotes).sort(
+        (a, b) => b.total_votes - a.total_votes
+      );
+
+      setResults({ promptWinners, leaderboard });
+    })();
+  }, [hunt?.status, huntId, prompts]);
+
+  function handleVotingTimeout() {
+    const currentPrompt = prompts[currentPromptIndex];
+    if (!currentPrompt) return;
+
+    // Mark as voted (even if no vote cast)
+    setVotedPromptIds((prev) => new Set(prev).add(currentPrompt.id));
+
+    // Move to next prompt or finish
+    if (currentPromptIndex < prompts.length - 1) {
+      setCurrentPromptIndex((prev) => prev + 1);
+      setVotingTimeLeft(5);
+    } else {
+      // All prompts voted - transition to finished
+      transitionToFinished();
+    }
+  }
+
+  async function transitionToFinished() {
+    if (!huntId) return;
+
+    const { error } = await supabase
+      .from("hunts")
+      .update({ status: "finished" })
+      .eq("id", huntId);
+
+    if (error) {
+      console.error("Failed to finish hunt:", error);
+      return;
+    }
+
+    setHunt((prev) => (prev ? { ...prev, status: "finished" } : prev));
+  }
+
+  async function castVote(submissionId: string, promptId: string) {
+    if (!playerId) return;
+
+    // Insert vote into database
+    const { error } = await supabase.from("votes").insert({
+      submission_id: submissionId,
+      player_id: playerId,
+      category: "best",
+    });
+
+    if (error) {
+      console.error("Failed to cast vote:", error);
+      setError(error.message);
+      return;
+    }
+
+    // Mark this prompt as voted
+    setVotedPromptIds((prev) => new Set(prev).add(promptId));
+
+    // Move to next prompt or finish
+    if (currentPromptIndex < prompts.length - 1) {
+      setCurrentPromptIndex((prev) => prev + 1);
+      setVotingTimeLeft(5);
+    } else {
+      // All prompts voted - transition to finished
+      transitionToFinished();
+    }
+  }
+
+  // --------------------------
   // Finish / Undo (persisted in hunt_players.finished_at)
   // --------------------------
   async function finishHunt() {
@@ -775,6 +1148,34 @@ export default function Home() {
     }
 
     setFinishedAt(now);
+
+    // Check if all players have finished - if so, transition to voting
+    const { data: allPlayers, error: playersError } = await supabase
+      .from("hunt_players")
+      .select("finished_at")
+      .eq("hunt_id", huntId);
+
+    if (playersError) {
+      console.error("Failed to check player status:", playersError);
+      return;
+    }
+
+    const allFinished = allPlayers?.every((p) => p.finished_at != null);
+    if (allFinished && allPlayers && allPlayers.length > 0) {
+      // Transition hunt to voting phase
+      const { error: statusError } = await supabase
+        .from("hunts")
+        .update({ status: "voting" })
+        .eq("id", huntId);
+
+      if (statusError) {
+        console.error("Failed to transition to voting:", statusError);
+        return;
+      }
+
+      // Update local state
+      setHunt((prev) => (prev ? { ...prev, status: "voting" } : prev));
+    }
   }
 
   async function undoFinish() {
@@ -802,7 +1203,7 @@ export default function Home() {
       <main className="p-6 max-w-2xl mx-auto">
         <h1 className="text-4xl font-bold mb-2">Photo Hunt</h1>
         <p className="text-gray-600 mb-8">
-          Create a new hunt (share the code), or join one with a code.
+          Create a new hunt (share the code with friends), or join one with a code.
         </p>
 
         {error && (
@@ -810,6 +1211,17 @@ export default function Home() {
             Error: {error}
           </div>
         )}
+
+        {/* Your Name */}
+        <div className="border rounded p-6 mb-6">
+          <h2 className="text-2xl font-semibold mb-4">Your Name</h2>
+          <input
+            className="border rounded p-3 w-full text-lg"
+            placeholder="Enter your name"
+            value={playerName}
+            onChange={(e) => savePlayerName(e.target.value)}
+          />
+        </div>
 
         <div className="border rounded p-6 mb-6">
           <h2 className="text-2xl font-semibold mb-4">Join a Hunt</h2>
@@ -826,49 +1238,35 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="border rounded p-6">
-          <h2 className="text-2xl font-semibold mb-4">Create New Hunt</h2>
-
-          <label className="block text-gray-700 mb-2">Pack</label>
-          <select
-            className="border rounded p-3 w-full mb-4"
-            value={createPack}
-            onChange={(e) => setCreatePack(e.target.value)}
-          >
-            {availablePacks.map((p) => (
-              <option key={p} value={p}>
-                {packLabel(p)} ({p})
-              </option>
-            ))}
-          </select>
-
-          <label className="block text-gray-700 mb-2">Completion mode</label>
-          <select
-            className="border rounded p-3 w-full mb-4"
-            value={createCompletionMode}
-            onChange={(e) => setCreateCompletionMode(e.target.value as any)}
-          >
-            <option value="anytime">anytime (finish whenever)</option>
-            <option value="all_required">all_required (must complete required photos)</option>
-          </select>
-
-          <label className="block text-gray-700 mb-2">Required prompt count (optional)</label>
-          <input
-            className="border rounded p-3 w-full mb-6"
-            placeholder="leave blank to require all prompts"
-            value={createRequiredCount}
-            onChange={(e) => setCreateRequiredCount(e.target.value)}
-          />
-
-          <button className="px-6 py-3 bg-black text-white rounded" onClick={createHunt}>
-            Create Hunt
-          </button>
+        <div className="border rounded p-6 mb-6">
+          <h2 className="text-2xl font-semibold mb-4">Create a Hunt</h2>
+          <div className="flex gap-3">
+            <select
+              className="border rounded p-3 flex-1 text-lg"
+              value={createPack}
+              onChange={(e) => setCreatePack(e.target.value)}
+            >
+              {availablePacks.map((p) => (
+                <option key={p.slug} value={p.slug}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <button className="px-6 py-3 bg-black text-white rounded" onClick={createHunt}>
+              Create
+            </button>
+          </div>
+          {getPackDescription(createPack) && (
+            <div className="mt-3 text-sm text-gray-500">
+              {getPackDescription(createPack)}
+            </div>
+          )}
         </div>
 
-        {/* Your Games (history) */}
+        {/* Your Hunts (history) */}
         {playerGames.length > 0 && (
-          <div className="border rounded p-6 mt-6">
-            <h2 className="text-2xl font-semibold mb-4">Your Games</h2>
+          <div className="border rounded p-6">
+            <h2 className="text-2xl font-semibold mb-4">Your Hunts</h2>
             <div className="space-y-3">
               {playerGames.map((game) => (
                 <div
@@ -878,7 +1276,7 @@ export default function Home() {
                   <div>
                     <div className="font-mono font-bold text-lg">{game.hunt_code}</div>
                     <div className="text-sm text-gray-500">
-                      {game.pack ? packLabel(game.pack) : "No pack"}
+                      {getPackName(game.pack)}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -952,8 +1350,11 @@ export default function Home() {
         {hunt.pack && (
           <div className="mb-6 p-4 bg-gray-50 rounded border">
             <div className="text-sm text-gray-500 mb-1">Pack</div>
-            <div className="text-lg font-semibold">{packLabel(hunt.pack)}</div>
-            <div className="text-sm text-gray-400">{prompts.length} prompts</div>
+            <div className="text-lg font-semibold">{getPackName(hunt.pack)}</div>
+            {getPackDescription(hunt.pack) && (
+              <div className="text-sm text-gray-600 mt-1">{getPackDescription(hunt.pack)}</div>
+            )}
+            <div className="text-sm text-gray-400 mt-1">{prompts.length} prompts</div>
           </div>
         )}
 
@@ -963,21 +1364,70 @@ export default function Home() {
             Players ({playerCount})
           </div>
           <div className="space-y-2">
-            {huntPlayers.map((p) => (
-              <div
-                key={p.id}
-                className="flex items-center justify-between p-3 bg-white border rounded"
-              >
-                <span className="font-medium">
-                  {p.display_name || "Anonymous"}
-                </span>
-                {p.role === "host" && (
-                  <span className="text-xs px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full">
-                    Host
-                  </span>
-                )}
-              </div>
-            ))}
+            {huntPlayers.map((p) => {
+              const isCurrentPlayer = p.player_id === playerId;
+              return (
+                <div
+                  key={p.id}
+                  className={`flex items-center justify-between p-3 border rounded ${
+                    isCurrentPlayer ? "bg-blue-50 border-blue-200" : "bg-white"
+                  }`}
+                >
+                  {isCurrentPlayer && isEditingName ? (
+                    <div className="flex gap-2 flex-1">
+                      <input
+                        className="border rounded px-2 py-1 flex-1"
+                        value={editingNameValue}
+                        onChange={(e) => setEditingNameValue(e.target.value)}
+                        placeholder="Your name"
+                        autoFocus
+                      />
+                      <button
+                        className="px-3 py-1 bg-black text-white rounded text-sm"
+                        onClick={() => updateDisplayName(editingNameValue)}
+                      >
+                        Save
+                      </button>
+                      <button
+                        className="px-3 py-1 border rounded text-sm"
+                        onClick={() => setIsEditingName(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">
+                          {p.display_name || "Anonymous"}
+                        </span>
+                        {isCurrentPlayer && (
+                          <span className="text-xs text-blue-600">(You)</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {isCurrentPlayer && (
+                          <button
+                            className="text-xs text-blue-600 underline"
+                            onClick={() => {
+                              setEditingNameValue(p.display_name || "");
+                              setIsEditingName(true);
+                            }}
+                          >
+                            Edit
+                          </button>
+                        )}
+                        {p.role === "host" && (
+                          <span className="text-xs px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full">
+                            Host
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -997,6 +1447,224 @@ export default function Home() {
   }
 
   // --------------------------
+  // Voting UI
+  // --------------------------
+  if (hunt?.status === "voting") {
+    const currentPrompt = prompts[currentPromptIndex];
+    const promptSubmissions = allSubmissions.filter(
+      (s) => s.prompt_id === currentPrompt?.id
+    );
+
+    return (
+      <main className="p-6 max-w-xl mx-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-4xl font-bold">Voting</h1>
+          <div className="text-sm text-gray-500">
+            {currentPromptIndex + 1} / {prompts.length}
+          </div>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 border border-red-300 text-red-700">
+            Error: {error}
+          </div>
+        )}
+
+        {/* Timer */}
+        <div className="mb-6 text-center">
+          <div
+            className={`text-6xl font-bold ${
+              votingTimeLeft <= 2 ? "text-red-500" : "text-gray-800"
+            }`}
+          >
+            {votingTimeLeft}
+          </div>
+          <div className="text-sm text-gray-500">seconds to vote</div>
+        </div>
+
+        {/* Current prompt */}
+        {currentPrompt && (
+          <div className="mb-6 p-4 bg-gray-50 rounded border text-center">
+            <div className="text-lg font-semibold">{currentPrompt.text}</div>
+          </div>
+        )}
+
+        {/* Photo gallery for this prompt */}
+        <div className="space-y-4">
+          {promptSubmissions.length === 0 ? (
+            <div className="text-center text-gray-500 py-8">
+              No submissions for this prompt
+            </div>
+          ) : (
+            promptSubmissions.map((submission) => {
+              const isOwnSubmission = submission.player_id === playerId;
+              const hasVoted = votedPromptIds.has(currentPrompt?.id ?? "");
+
+              return (
+                <div
+                  key={submission.id}
+                  className={`border rounded overflow-hidden ${
+                    isOwnSubmission ? "opacity-50" : ""
+                  }`}
+                >
+                  {submissionUrls[submission.id] && (
+                    <img
+                      src={submissionUrls[submission.id]}
+                      alt={`${submission.display_name}'s photo`}
+                      className="w-full h-48 object-cover"
+                    />
+                  )}
+                  <div className="p-3 flex items-center justify-between bg-white">
+                    <span className="font-medium">{submission.display_name}</span>
+                    {!isOwnSubmission && !hasVoted && (
+                      <button
+                        className="px-4 py-2 bg-green-600 text-white rounded"
+                        onClick={() => castVote(submission.id, currentPrompt?.id ?? "")}
+                      >
+                        Vote
+                      </button>
+                    )}
+                    {isOwnSubmission && (
+                      <span className="text-sm text-gray-400">Your photo</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Skip button */}
+        <div className="mt-6">
+          <button
+            className="w-full py-3 border border-gray-300 rounded text-gray-600"
+            onClick={handleVotingTimeout}
+          >
+            Skip
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  // --------------------------
+  // Results UI
+  // --------------------------
+  if (hunt?.status === "finished") {
+    return (
+      <main className="p-6 max-w-xl mx-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-4xl font-bold">Results</h1>
+          <button className="text-sm underline text-gray-600" onClick={changeHunt}>
+            Exit
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 border border-red-300 text-red-700">
+            Error: {error}
+          </div>
+        )}
+
+        {!results ? (
+          <div className="text-center py-8 text-gray-500">Loading results...</div>
+        ) : (
+          <>
+            {/* Leaderboard */}
+            <div className="mb-8">
+              <h2 className="text-2xl font-semibold mb-4">Leaderboard</h2>
+              <div className="space-y-2">
+                {results.leaderboard.map((player, index) => (
+                  <div
+                    key={player.display_name}
+                    className={`flex items-center justify-between p-4 rounded border ${
+                      index === 0
+                        ? "bg-yellow-50 border-yellow-300"
+                        : index === 1
+                        ? "bg-gray-100 border-gray-300"
+                        : index === 2
+                        ? "bg-orange-50 border-orange-300"
+                        : "bg-white"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={`text-2xl font-bold ${
+                          index === 0
+                            ? "text-yellow-600"
+                            : index === 1
+                            ? "text-gray-500"
+                            : index === 2
+                            ? "text-orange-600"
+                            : "text-gray-400"
+                        }`}
+                      >
+                        #{index + 1}
+                      </span>
+                      <span className="font-medium">{player.display_name}</span>
+                    </div>
+                    <div className="text-lg font-semibold">
+                      {player.total_votes} vote{player.total_votes !== 1 ? "s" : ""}
+                    </div>
+                  </div>
+                ))}
+                {results.leaderboard.length === 0 && (
+                  <div className="text-center text-gray-500 py-4">
+                    No votes were cast
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Prompt Winners */}
+            <div className="mb-8">
+              <h2 className="text-2xl font-semibold mb-4">Best Photos</h2>
+              <div className="space-y-4">
+                {results.promptWinners.map(({ prompt, winner }) => (
+                  <div key={prompt.id} className="border rounded overflow-hidden">
+                    <div className="p-3 bg-gray-50 border-b">
+                      <div className="font-medium">{prompt.text}</div>
+                    </div>
+                    {winner ? (
+                      <div>
+                        {winner.photo_url && (
+                          <img
+                            src={winner.photo_url}
+                            alt={`${winner.display_name}'s winning photo`}
+                            className="w-full h-48 object-cover"
+                          />
+                        )}
+                        <div className="p-3 flex items-center justify-between">
+                          <span className="font-medium">{winner.display_name}</span>
+                          <span className="text-sm text-green-600">
+                            {winner.votes} vote{winner.votes !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-4 text-center text-gray-500">
+                        No winner
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Return home button */}
+            <button
+              className="w-full py-4 bg-black text-white rounded font-semibold text-lg"
+              onClick={changeHunt}
+            >
+              Return Home
+            </button>
+          </>
+        )}
+      </main>
+    );
+  }
+
+  // --------------------------
   // Active Hunt UI
   // --------------------------
   return (
@@ -1008,22 +1676,13 @@ export default function Home() {
         </button>
       </div>
 
-      {/* Hunt code for sharing */}
-      {hunt?.code && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
-          <div className="text-sm text-blue-700">
-            Share this code with friends:
-          </div>
-          <div className="text-2xl font-mono font-bold text-blue-900 tracking-wider">
-            {hunt.code}
-          </div>
-        </div>
-      )}
-
       {hunt?.pack && (
-        <div className="text-sm text-gray-600 mb-4">
-          Pack: <span className="font-medium text-gray-900">{packLabel(hunt.pack)}</span>{" "}
-          <span className="text-gray-400">({hunt.pack})</span>
+        <div className="mb-4 p-3 bg-gray-50 rounded border">
+          <div className="text-sm text-gray-500">Pack</div>
+          <div className="font-medium text-gray-900">{getPackName(hunt.pack)}</div>
+          {getPackDescription(hunt.pack) && (
+            <div className="text-sm text-gray-600 mt-1">{getPackDescription(hunt.pack)}</div>
+          )}
         </div>
       )}
 
@@ -1104,6 +1763,25 @@ export default function Home() {
           const status = statusByPromptId[p.id] ?? "idle";
           const isBusy = status === "saving" || status === "uploading";
 
+          // Contextual label based on status
+          const statusLabel = {
+            idle: "Take a photo of:",
+            saving: "Saving...",
+            needs_photo: "Tap to add photo:",
+            uploading: "Uploading...",
+            saved: "Photo taken!",
+            error: "Error - tap to retry:",
+          }[status];
+
+          const statusColor = {
+            idle: "text-gray-500",
+            saving: "text-yellow-600",
+            needs_photo: "text-blue-600",
+            uploading: "text-yellow-600",
+            saved: "text-green-600",
+            error: "text-red-600",
+          }[status];
+
           return (
             <li
               key={p.id}
@@ -1112,26 +1790,29 @@ export default function Home() {
                 if (!isBusy) onPromptClick(p.id);
               }}
             >
-              <div className="text-xs text-gray-500 flex items-center justify-between">
-                <span>{p.pack}</span>
-
-                {status === "saving" && <span>Saving…</span>}
-                {status === "needs_photo" && <span>Selected ✅ (tap to add photo)</span>}
-                {status === "uploading" && <span>Uploading…</span>}
-                {status === "saved" && <span>Saved ✅</span>}
-                {status === "error" && <span className="text-red-700">Error ❌</span>}
+              <div className={`text-xs font-medium mb-1 ${statusColor}`}>
+                {statusLabel}
               </div>
 
-              <div className="font-medium">{p.text}</div>
+              <div className="font-medium text-lg">{p.text}</div>
 
               {photoUrlByPromptId[p.id] && (
                 <div className="mt-2">
                   <img className="w-full rounded border" alt="submission" src={photoUrlByPromptId[p.id]} />
+                  <button
+                    className="mt-2 text-sm text-blue-600 underline"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPromptClick(p.id);
+                    }}
+                  >
+                    Retake photo
+                  </button>
                 </div>
               )}
 
               {!photoUrlByPromptId[p.id] && photoPathByPromptId[p.id] && (
-                <div className="mt-2 text-xs text-gray-500">Photo attached (loading preview…)</div>
+                <div className="mt-2 text-xs text-gray-500">Photo attached (loading preview...)</div>
               )}
             </li>
           );
