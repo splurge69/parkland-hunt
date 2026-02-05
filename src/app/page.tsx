@@ -119,13 +119,23 @@ function packLabel(pack: string) {
 export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
-  // Player identity (device-local)
-  const [playerId, setPlayerId] = useState<string | null>(null);
-  const [playerName, setPlayerName] = useState<string>("");
+  // Player identity (device-local) - load from localStorage on init
+  const [playerId, setPlayerId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("player_id");
+  });
+  const [playerName, setPlayerName] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem("player_name") || "";
+  });
 
-  // Hunt selection
-  const [huntId, setHuntId] = useState<string | null>(null);
+  // Hunt selection - load from localStorage on init
+  const [huntId, setHuntId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("hunt_id");
+  });
   const [hunt, setHunt] = useState<Hunt | null>(null);
+  const [huntLoading, setHuntLoading] = useState(false);
 
   // Create/Join UI
   const [availablePacks, setAvailablePacks] = useState<Pack[]>([]);
@@ -244,20 +254,10 @@ export default function Home() {
     setIsEditingName(false);
   }
 
-  // --------------------------
-  // Boot: load local storage
-  // --------------------------
+  // Log initial state loaded from localStorage (for debugging)
   useEffect(() => {
-    const storedHuntId = localStorage.getItem("hunt_id");
-    const storedPlayerId = localStorage.getItem("player_id");
-    const storedPlayerName = localStorage.getItem("player_name");
-    
-    console.log("[Boot] localStorage:", { storedHuntId, storedPlayerId, storedPlayerName });
-    
-    if (storedHuntId) setHuntId(storedHuntId);
-    if (storedPlayerId) setPlayerId(storedPlayerId);
-    if (storedPlayerName) setPlayerName(storedPlayerName);
-  }, []);
+    console.log("[Boot] Initial state from localStorage:", { playerId, playerName, huntId });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --------------------------
   // Ensure player exists (FK-safe)
@@ -395,8 +395,12 @@ export default function Home() {
   useEffect(() => {
     if (!huntId) {
       setHunt(null);
+      setHuntLoading(false);
       return;
     }
+
+    setHuntLoading(true);  // Start loading
+    setHunt(null);         // Clear old hunt data
 
     (async () => {
       const { data, error } = await supabase
@@ -408,10 +412,13 @@ export default function Home() {
       if (error) {
         console.error("Failed to load hunt:", error);
         setError(error.message);
+        setHuntLoading(false);
         return;
       }
 
+      console.log("[Hunt] Loaded hunt with status:", data.status);
       setHunt(data as Hunt);
+      setHuntLoading(false);
     })();
   }, [huntId]);
 
@@ -1564,6 +1571,20 @@ export default function Home() {
             </div>
           </div>
         )}
+      </main>
+    );
+  }
+
+  // --------------------------
+  // Loading state while fetching hunt data
+  // --------------------------
+  if (huntId && (huntLoading || !hunt)) {
+    return (
+      <main className="p-4 sm:p-6 max-w-xl mx-auto">
+        <div className="text-center py-12">
+          <div className="text-4xl mb-4">Loading...</div>
+          <div className="text-[#6B7280]">Fetching hunt data</div>
+        </div>
       </main>
     );
   }
