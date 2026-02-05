@@ -1057,6 +1057,13 @@ export default function Home() {
   // --------------------------
   useEffect(() => {
     if (hunt?.status !== "finished" || !huntId) return;
+    
+    if (prompts.length === 0) {
+      console.log("[Results] Waiting for prompts to load...");
+      return; // Will re-run when prompts load
+    }
+    
+    console.log("[Results] Loading results for hunt:", huntId, "with", prompts.length, "prompts");
 
     (async () => {
       // Get all submissions for this hunt
@@ -1133,11 +1140,14 @@ export default function Home() {
         playerVotes[sub.player_id].total_votes += votes;
       }
 
-      // Find winner for each prompt
+      // Find winner for each prompt - only include prompts with submissions
       for (const prompt of prompts) {
         const promptSubs = (submissionsData ?? []).filter(
           (s: { prompt_id: string }) => s.prompt_id === prompt.id
         );
+        
+        // Skip prompts with no submissions
+        if (promptSubs.length === 0) continue;
         
         let maxVotes = 0;
         let winner = null;
@@ -1164,6 +1174,7 @@ export default function Home() {
         (a, b) => b.total_votes - a.total_votes
       );
 
+      console.log("[Results] Loaded:", promptWinners.length, "prompts with submissions,", leaderboard.length, "players on leaderboard");
       setResults({ promptWinners, leaderboard });
     })();
   }, [hunt?.status, huntId, prompts]);
@@ -1526,7 +1537,14 @@ export default function Home() {
                       {game.hunt_status}
                     </span>
                     {/* Actions */}
-                    {game.hunt_status !== "finished" && (
+                    {game.hunt_status === "finished" ? (
+                      <button
+                        className="px-3 sm:px-4 py-2 bg-[#6B7280] hover:bg-[#555] text-white text-sm font-semibold rounded-xl transition-colors flex-1 sm:flex-none"
+                        onClick={() => resumeGame(game.hunt_id)}
+                      >
+                        View Results
+                      </button>
+                    ) : (
                       <button
                         className="px-3 sm:px-4 py-2 bg-[#2D6A4F] hover:bg-[#245840] text-white text-sm font-semibold rounded-xl transition-colors flex-1 sm:flex-none"
                         onClick={() => resumeGame(game.hunt_id)}
