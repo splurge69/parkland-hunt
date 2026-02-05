@@ -276,7 +276,7 @@ export default function Home() {
           .from("players")
           .select("id")
           .eq("id", playerId)
-          .single();
+          .maybeSingle();
         
         if (existingPlayer) {
           console.log("[Player] Verified - player exists");
@@ -463,7 +463,7 @@ export default function Home() {
           .select("id, finished_at, role")
           .eq("hunt_id", huntId)
           .eq("player_id", playerId)
-          .single();
+          .maybeSingle();
 
         if (!existing) {
           console.log("[Hunt Join] Not a member, joining as player");
@@ -495,7 +495,7 @@ export default function Home() {
           .select("finished_at, role")
           .eq("hunt_id", huntId)
           .eq("player_id", playerId)
-          .single();
+          .maybeSingle();
 
         if (fetchError) {
           console.error("Failed to load player data:", fetchError);
