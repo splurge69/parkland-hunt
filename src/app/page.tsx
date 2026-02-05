@@ -118,24 +118,31 @@ function packLabel(pack: string) {
 
 export default function Home() {
   const [error, setError] = useState<string | null>(null);
+  
+  // Hydration flag - prevents SSR/client mismatch
+  const [hydrated, setHydrated] = useState(false);
 
-  // Player identity (device-local) - load from localStorage on init
-  const [playerId, setPlayerId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("player_id");
-  });
-  const [playerName, setPlayerName] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    return localStorage.getItem("player_name") || "";
-  });
+  // Player identity (device-local) - initialized empty, loaded after hydration
+  const [playerId, setPlayerId] = useState<string | null>(null);
+  const [playerName, setPlayerName] = useState<string>("");
 
-  // Hunt selection - load from localStorage on init
-  const [huntId, setHuntId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("hunt_id");
-  });
+  // Hunt selection - initialized empty, loaded after hydration
+  const [huntId, setHuntId] = useState<string | null>(null);
   const [hunt, setHunt] = useState<Hunt | null>(null);
   const [huntLoading, setHuntLoading] = useState(false);
+  
+  // Load from localStorage AFTER hydration (client-side only)
+  useEffect(() => {
+    const storedPlayerId = localStorage.getItem("player_id");
+    const storedPlayerName = localStorage.getItem("player_name");
+    const storedHuntId = localStorage.getItem("hunt_id");
+    
+    if (storedPlayerId) setPlayerId(storedPlayerId);
+    if (storedPlayerName) setPlayerName(storedPlayerName);
+    if (storedHuntId) setHuntId(storedHuntId);
+    
+    setHydrated(true);
+  }, []);
 
   // Create/Join UI
   const [availablePacks, setAvailablePacks] = useState<Pack[]>([]);
@@ -263,6 +270,9 @@ export default function Home() {
   // Ensure player exists (FK-safe)
   // --------------------------
   useEffect(() => {
+    // Wait for hydration before checking/creating player
+    if (!hydrated) return;
+    
     if (creatingPlayerRef.current) {
       console.log("[Player] Skipping - already creating");
       return;
@@ -315,13 +325,13 @@ export default function Home() {
         creatingPlayerRef.current = false;
       }
     })();
-  }, [playerId]);
+  }, [hydrated, playerId]);
 
   // --------------------------
   // Load player's game history (only when on home screen)
   // --------------------------
   useEffect(() => {
-    if (!playerId || huntId) return; // Only fetch when on home screen
+    if (!hydrated || !playerId || huntId) return; // Only fetch when on home screen after hydration
 
     async function fetchPlayerGames() {
       const { data, error } = await supabase
@@ -360,7 +370,7 @@ export default function Home() {
     }
 
     fetchPlayerGames();
-  }, [playerId, huntId]);
+  }, [hydrated, playerId, huntId]);
 
   // --------------------------
   // Load available packs from packs table
@@ -1372,6 +1382,22 @@ export default function Home() {
   // --------------------------
   // UI
   // --------------------------
+  
+  // Show consistent loading state until hydration completes (prevents SSR mismatch)
+  if (!hydrated) {
+    return (
+      <main className="p-4 sm:p-6 max-w-2xl mx-auto">
+        <div className="text-center mb-8">
+          <h1 className="text-5xl font-extrabold mb-3 text-[#2D6A4F]">📸 Photo Hunt</h1>
+          <p className="text-lg text-[#1B1B1B] mb-2">
+            The photo scavenger hunt for walking with friends.
+          </p>
+          <p className="text-[#6B7280]">Loading...</p>
+        </div>
+      </main>
+    );
+  }
+  
   if (!huntId) {
     return (
       <main className="p-4 sm:p-6 max-w-2xl mx-auto">
