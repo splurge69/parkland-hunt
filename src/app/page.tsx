@@ -118,24 +118,31 @@ function packLabel(pack: string) {
 
 export default function Home() {
   const [error, setError] = useState<string | null>(null);
+  
+  // Hydration flag - prevents race conditions with localStorage
+  const [hydrated, setHydrated] = useState(false);
 
-  // Player identity (device-local) - load from localStorage on init
-  const [playerId, setPlayerId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("player_id");
-  });
-  const [playerName, setPlayerName] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    return localStorage.getItem("player_name") || "";
-  });
+  // Player identity (device-local)
+  const [playerId, setPlayerId] = useState<string | null>(null);
+  const [playerName, setPlayerName] = useState<string>("");
 
-  // Hunt selection - load from localStorage on init
-  const [huntId, setHuntId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("hunt_id");
-  });
+  // Hunt selection
+  const [huntId, setHuntId] = useState<string | null>(null);
   const [hunt, setHunt] = useState<Hunt | null>(null);
   const [huntLoading, setHuntLoading] = useState(false);
+  
+  // Load from localStorage after hydration (client-side only)
+  useEffect(() => {
+    const storedPlayerId = localStorage.getItem("player_id");
+    const storedPlayerName = localStorage.getItem("player_name");
+    const storedHuntId = localStorage.getItem("hunt_id");
+    
+    if (storedPlayerId) setPlayerId(storedPlayerId);
+    if (storedPlayerName) setPlayerName(storedPlayerName);
+    if (storedHuntId) setHuntId(storedHuntId);
+    
+    setHydrated(true);
+  }, []);
 
   // Create/Join UI
   const [availablePacks, setAvailablePacks] = useState<Pack[]>([]);
@@ -256,13 +263,17 @@ export default function Home() {
 
   // Log initial state loaded from localStorage (for debugging)
   useEffect(() => {
+    if (!hydrated) return;
     console.log("[Boot] Initial state from localStorage:", { playerId, playerName, huntId });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hydrated, playerId, playerName, huntId]);
 
   // --------------------------
   // Ensure player exists (FK-safe)
   // --------------------------
   useEffect(() => {
+    // Wait for hydration before checking/creating player
+    if (!hydrated) return;
+    
     if (creatingPlayerRef.current) {
       console.log("[Player] Skipping - already creating");
       return;
@@ -315,13 +326,13 @@ export default function Home() {
         creatingPlayerRef.current = false;
       }
     })();
-  }, [playerId]);
+  }, [hydrated, playerId]);
 
   // --------------------------
   // Load player's game history (only when on home screen)
   // --------------------------
   useEffect(() => {
-    if (!playerId || huntId) return; // Only fetch when on home screen
+    if (!hydrated || !playerId || huntId) return; // Only fetch when on home screen
 
     async function fetchPlayerGames() {
       const { data, error } = await supabase
@@ -360,7 +371,7 @@ export default function Home() {
     }
 
     fetchPlayerGames();
-  }, [playerId, huntId]);
+  }, [hydrated, playerId, huntId]);
 
   // --------------------------
   // Load available packs from packs table
@@ -1079,6 +1090,10 @@ export default function Home() {
         .select("id, prompt_id, player_id, photo_path")
         .eq("hunt_id", huntId);
 
+      // #region agent log
+      console.log("[DEBUG-A] submissionsData:", {count:submissionsData?.length, submissions:submissionsData, error:submissionsError?.message});
+      // #endregion
+
       if (submissionsError) {
         console.error("Failed to load submissions for results:", submissionsError);
         return;
@@ -1129,9 +1144,12 @@ export default function Home() {
       const photoUrls: Record<string, string> = {};
       for (const sub of submissionsData ?? []) {
         if (sub.photo_path) {
-          const { data: urlData } = await supabase.storage
+          const { data: urlData, error: urlError } = await supabase.storage
             .from("photos")
             .createSignedUrl(sub.photo_path, 3600);
+          // #region agent log
+          console.log("[DEBUG-C] signedUrl generation:", {subId:sub.id, photoPath:sub.photo_path, hasSignedUrl:!!urlData?.signedUrl, error:urlError?.message});
+          // #endregion
           if (urlData?.signedUrl) {
             photoUrls[sub.id] = urlData.signedUrl;
           }
@@ -1142,12 +1160,15 @@ export default function Home() {
         const votes = voteCountMap[sub.id] || 0;
         
         if (!playerVotes[sub.player_id]) {
-          playerVotes[sub.player_id] = { display_name: playerDisplayName, total_votes: 0 };
+          playerVotes[sub.player_id] = { player_id: sub.player_id, display_name: playerDisplayName, total_votes: 0 };
         }
         playerVotes[sub.player_id].total_votes += votes;
       }
 
       // Find winner for each prompt - only include prompts with submissions
+      // #region agent log
+      console.log("[DEBUG-D] starting prompt loop:", {promptCount:prompts.length, submissionsCount:submissionsData?.length, photoUrlsCount:Object.keys(photoUrls).length});
+      // #endregion
       for (const prompt of prompts) {
         const promptSubs = (submissionsData ?? []).filter(
           (s: { prompt_id: string }) => s.prompt_id === prompt.id
@@ -1182,6 +1203,9 @@ export default function Home() {
       );
 
       console.log("[Results] Loaded:", promptWinners.length, "prompts with submissions,", leaderboard.length, "players on leaderboard");
+      // #region agent log
+      console.log("[DEBUG-E] final promptWinners:", {count:promptWinners.length, winners:promptWinners.map(pw=>({promptText:pw.prompt.text, hasWinner:!!pw.winner, photoUrl:pw.winner?.photo_url?.substring(0,50)})), photoUrlsCount:Object.keys(photoUrls).length});
+      // #endregion
       setResults({ promptWinners, leaderboard });
     })();
   }, [hunt?.status, huntId, prompts]);
@@ -1372,6 +1396,22 @@ export default function Home() {
   // --------------------------
   // UI
   // --------------------------
+  
+  // Show loading state until hydration is complete (prevents hydration mismatch)
+  if (!hydrated) {
+    return (
+      <main className="p-4 sm:p-6 max-w-2xl mx-auto">
+        <div className="text-center mb-8">
+          <h1 className="text-5xl font-extrabold mb-3 text-[#2D6A4F]">📸 Photo Hunt</h1>
+          <p className="text-lg text-[#1B1B1B] mb-2">
+            The photo scavenger hunt for walking with friends.
+          </p>
+          <p className="text-[#6B7280]">Loading...</p>
+        </div>
+      </main>
+    );
+  }
+  
   if (!huntId) {
     return (
       <main className="p-4 sm:p-6 max-w-2xl mx-auto">
@@ -1882,7 +1922,7 @@ export default function Home() {
               <div className="space-y-3">
                 {results.leaderboard.map((player, index) => (
                   <div
-                    key={player.display_name}
+                    key={player.player_id || index}
                     className={`flex items-center justify-between p-4 rounded-2xl border shadow-sm ${
                       index === 0
                         ? "bg-amber-50 border-amber-300"
