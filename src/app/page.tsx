@@ -1158,8 +1158,11 @@ export default function Home() {
     return (
       <main className="p-6 max-w-2xl mx-auto">
         <h1 className="text-4xl font-bold mb-2">Photo Hunt</h1>
-        <p className="text-gray-600 mb-8">
-          Create a new hunt (share the code with friends), or join one with a code.
+        <p className="text-gray-600 mb-2">
+          The photo scavenger hunt for walking with friends. Submit your photos and vote for your favourites.
+        </p>
+        <p className="text-gray-500 text-sm mb-8">
+          Create a new hunt (share the code with friends), or join a friend's hunt using their code.
         </p>
 
         {error && (
@@ -1177,21 +1180,6 @@ export default function Home() {
             value={playerName}
             onChange={(e) => savePlayerName(e.target.value)}
           />
-        </div>
-
-        <div className="border rounded p-6 mb-6">
-          <h2 className="text-2xl font-semibold mb-4">Join a Hunt</h2>
-          <div className="flex gap-3">
-            <input
-              className="border rounded p-3 flex-1 text-lg"
-              placeholder="ENTER CODE"
-              value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-            />
-            <button className="px-6 py-3 bg-black text-white rounded" onClick={joinHuntByCode}>
-              Join
-            </button>
-          </div>
         </div>
 
         <div className="border rounded p-6 mb-6">
@@ -1217,6 +1205,21 @@ export default function Home() {
               {getPackDescription(createPack)}
             </div>
           )}
+        </div>
+
+        <div className="border rounded p-6 mb-6">
+          <h2 className="text-2xl font-semibold mb-4">Join a Hunt</h2>
+          <div className="flex gap-3">
+            <input
+              className="border rounded p-3 flex-1 text-lg"
+              placeholder="ENTER CODE"
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+            />
+            <button className="px-6 py-3 bg-black text-white rounded" onClick={joinHuntByCode}>
+              Join
+            </button>
+          </div>
         </div>
 
         {/* Your Hunts (history) */}
