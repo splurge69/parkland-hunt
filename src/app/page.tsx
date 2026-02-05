@@ -1232,7 +1232,7 @@ export default function Home() {
   // --------------------------
   if (!huntId) {
     return (
-      <main className="p-6 max-w-2xl mx-auto">
+      <main className="p-4 sm:p-6 max-w-2xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-5xl font-extrabold mb-3 text-[#2D6A4F]">📸 Photo Hunt</h1>
           <p className="text-lg text-[#1B1B1B] mb-2">
@@ -1250,13 +1250,13 @@ export default function Home() {
         )}
 
         {/* Your Name */}
-        <div className="bg-white rounded-2xl p-6 mb-5 shadow-md border border-[#E5E7EB]">
-          <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+        <div className="bg-white rounded-2xl p-4 sm:p-6 mb-5 shadow-md border border-[#E5E7EB] overflow-hidden">
+          <h2 className="text-lg sm:text-xl font-bold mb-4 flex items-center gap-2">
             <span>👤</span> Your Name
           </h2>
-          <div className="flex gap-3">
+          <div className="flex gap-2 sm:gap-3">
             <input
-              className="bg-white border-2 border-[#E5E7EB] rounded-xl p-3 flex-1 text-lg focus:outline-none focus:ring-2 focus:ring-[#2D6A4F] focus:border-transparent placeholder:text-gray-400"
+              className="bg-white border-2 border-[#E5E7EB] rounded-xl p-3 flex-1 min-w-0 text-base sm:text-lg focus:outline-none focus:ring-2 focus:ring-[#2D6A4F] focus:border-transparent placeholder:text-gray-400"
               placeholder="Enter your name"
               value={playerName}
               onChange={(e) => {
@@ -1265,7 +1265,7 @@ export default function Home() {
               }}
             />
             <button
-              className="px-6 py-3 bg-[#2D6A4F] hover:bg-[#245840] text-white font-semibold rounded-xl transition-colors"
+              className="px-4 sm:px-6 py-3 bg-[#2D6A4F] hover:bg-[#245840] text-white font-semibold rounded-xl transition-colors shrink-0"
               onClick={() => {
                 savePlayerName(playerName);
                 setNameSaved(true);
@@ -1283,13 +1283,13 @@ export default function Home() {
         </div>
 
         {/* Create a Hunt */}
-        <div className="bg-white rounded-2xl p-6 mb-5 shadow-md border border-[#E5E7EB]">
-          <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+        <div className="bg-white rounded-2xl p-4 sm:p-6 mb-5 shadow-md border border-[#E5E7EB] overflow-hidden">
+          <h2 className="text-lg sm:text-xl font-bold mb-4 flex items-center gap-2">
             <span>🎯</span> Create a Hunt
           </h2>
-          <div className="flex gap-3">
+          <div className="flex gap-2 sm:gap-3">
             <select
-              className="bg-white border-2 border-[#E5E7EB] rounded-xl p-3 flex-1 text-lg focus:outline-none focus:ring-2 focus:ring-[#2D6A4F] focus:border-transparent"
+              className="bg-white border-2 border-[#E5E7EB] rounded-xl p-3 flex-1 min-w-0 text-base sm:text-lg focus:outline-none focus:ring-2 focus:ring-[#2D6A4F] focus:border-transparent"
               value={createPack}
               onChange={(e) => setCreatePack(e.target.value)}
             >
@@ -1300,7 +1300,7 @@ export default function Home() {
               ))}
             </select>
             <button 
-              className="px-6 py-3 bg-[#2D6A4F] hover:bg-[#245840] text-white font-semibold rounded-xl transition-colors" 
+              className="px-4 sm:px-6 py-3 bg-[#2D6A4F] hover:bg-[#245840] text-white font-semibold rounded-xl transition-colors shrink-0" 
               onClick={createHunt}
             >
               Create
@@ -1328,19 +1328,19 @@ export default function Home() {
         </div>
 
         {/* Join a Hunt */}
-        <div className="bg-white rounded-2xl p-6 mb-5 shadow-md border border-[#E5E7EB]">
-          <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+        <div className="bg-white rounded-2xl p-4 sm:p-6 mb-5 shadow-md border border-[#E5E7EB] overflow-hidden">
+          <h2 className="text-lg sm:text-xl font-bold mb-4 flex items-center gap-2">
             <span>🔗</span> Join a Hunt
           </h2>
-          <div className="flex gap-3">
+          <div className="flex gap-2 sm:gap-3">
             <input
-              className="bg-white border-2 border-[#E5E7EB] rounded-xl p-3 flex-1 text-lg font-mono tracking-wider focus:outline-none focus:ring-2 focus:ring-[#2D6A4F] focus:border-transparent placeholder:text-gray-400"
+              className="bg-white border-2 border-[#E5E7EB] rounded-xl p-3 flex-1 min-w-0 text-base sm:text-lg font-mono tracking-wider focus:outline-none focus:ring-2 focus:ring-[#2D6A4F] focus:border-transparent placeholder:text-gray-400"
               placeholder="ENTER CODE"
               value={joinCode}
               onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
             />
             <button 
-              className="px-6 py-3 bg-[#E07A5F] hover:bg-[#C96A51] text-white font-semibold rounded-xl transition-colors" 
+              className="px-4 sm:px-6 py-3 bg-[#E07A5F] hover:bg-[#C96A51] text-white font-semibold rounded-xl transition-colors shrink-0" 
               onClick={joinHuntByCode}
             >
               Join
@@ -1350,26 +1350,39 @@ export default function Home() {
 
         {/* Your Hunts (history) */}
         {playerGames.length > 0 && (
-          <div className="bg-white rounded-2xl p-6 shadow-md border border-[#E5E7EB]">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-md border border-[#E5E7EB] overflow-hidden">
+            <h2 className="text-lg sm:text-xl font-bold mb-4 flex items-center gap-2">
               <span>📋</span> Your Hunts
             </h2>
             <div className="space-y-3">
               {playerGames.map((game) => (
                 <div
                   key={game.hunt_id}
-                  className="flex items-center justify-between p-4 bg-[#FEFAE0] rounded-xl border border-[#E5E7EB]"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 bg-[#FEFAE0] rounded-xl border border-[#E5E7EB] gap-3"
                 >
-                  <div>
-                    <div className="font-mono font-bold text-lg tracking-wider">{game.hunt_code}</div>
-                    <div className="text-sm text-[#6B7280]">
+                  <div className="flex items-center justify-between sm:block">
+                    <div className="font-mono font-bold text-base sm:text-lg tracking-wider">{game.hunt_code}</div>
+                    <span
+                      className={`sm:hidden text-xs px-2 py-1 rounded-full font-semibold ${
+                        game.hunt_status === "lobby"
+                          ? "bg-amber-100 text-amber-800"
+                          : game.hunt_status === "active"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : game.hunt_status === "voting"
+                          ? "bg-purple-100 text-purple-800"
+                          : "bg-gray-100 text-gray-600"
+                      }`}
+                    >
+                      {game.hunt_status}
+                    </span>
+                    <div className="hidden sm:block text-sm text-[#6B7280]">
                       {getPackName(game.pack)}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {/* Status badge */}
+                    {/* Status badge - desktop only */}
                     <span
-                      className={`text-xs px-3 py-1 rounded-full font-semibold ${
+                      className={`hidden sm:inline text-xs px-3 py-1 rounded-full font-semibold ${
                         game.hunt_status === "lobby"
                           ? "bg-amber-100 text-amber-800"
                           : game.hunt_status === "active"
@@ -1384,14 +1397,14 @@ export default function Home() {
                     {/* Actions */}
                     {game.hunt_status !== "finished" && (
                       <button
-                        className="px-4 py-2 bg-[#2D6A4F] hover:bg-[#245840] text-white text-sm font-semibold rounded-xl transition-colors"
+                        className="px-3 sm:px-4 py-2 bg-[#2D6A4F] hover:bg-[#245840] text-white text-sm font-semibold rounded-xl transition-colors flex-1 sm:flex-none"
                         onClick={() => resumeGame(game.hunt_id)}
                       >
                         Resume
                       </button>
                     )}
                     <button
-                      className="px-4 py-2 border border-red-200 text-sm rounded-xl text-red-600 hover:bg-red-50 transition-colors"
+                      className="px-3 sm:px-4 py-2 border border-red-200 text-sm rounded-xl text-red-600 hover:bg-red-50 transition-colors flex-1 sm:flex-none"
                       onClick={() => leaveGame(game.hunt_id)}
                     >
                       Leave
@@ -1411,9 +1424,9 @@ export default function Home() {
   // --------------------------
   if (hunt?.status === "lobby") {
     return (
-      <main className="p-6 max-w-xl mx-auto pb-24">
+      <main className="p-4 sm:p-6 max-w-xl mx-auto pb-24">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
             <span>⏳</span> Waiting Room
           </h1>
           <button 
@@ -1472,22 +1485,22 @@ export default function Home() {
                   }`}
                 >
                   {isCurrentPlayer && isEditingName ? (
-                    <div className="flex gap-2 flex-1">
+                    <div className="flex gap-2 flex-1 flex-wrap sm:flex-nowrap">
                       <input
-                        className="border border-[#E5E7EB] rounded-xl px-3 py-2 flex-1 focus:outline-none focus:ring-2 focus:ring-[#2D6A4F]"
+                        className="border border-[#E5E7EB] rounded-xl px-3 py-2 flex-1 min-w-0 focus:outline-none focus:ring-2 focus:ring-[#2D6A4F]"
                         value={editingNameValue}
                         onChange={(e) => setEditingNameValue(e.target.value)}
                         placeholder="Your name"
                         autoFocus
                       />
                       <button
-                        className="px-4 py-2 bg-[#2D6A4F] text-white rounded-xl text-sm font-semibold"
+                        className="px-3 sm:px-4 py-2 bg-[#2D6A4F] text-white rounded-xl text-sm font-semibold shrink-0"
                         onClick={() => updateDisplayName(editingNameValue)}
                       >
                         Save
                       </button>
                       <button
-                        className="px-4 py-2 border border-[#E5E7EB] rounded-xl text-sm"
+                        className="px-3 sm:px-4 py-2 border border-[#E5E7EB] rounded-xl text-sm shrink-0"
                         onClick={() => setIsEditingName(false)}
                       >
                         Cancel
@@ -1551,8 +1564,8 @@ export default function Home() {
     // If no prompts have submissions, go straight to results
     if (promptsWithSubmissions.length === 0) {
       return (
-        <main className="p-6 max-w-xl mx-auto">
-          <h1 className="text-3xl font-extrabold text-[#2D6A4F] mb-6 flex items-center gap-2">
+        <main className="p-4 sm:p-6 max-w-xl mx-auto">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-[#2D6A4F] mb-6 flex items-center gap-2">
             <span>🗳️</span> Voting
           </h1>
           <div className="text-center py-8 text-[#6B7280] bg-white rounded-2xl border border-[#E5E7EB]">
@@ -1574,9 +1587,9 @@ export default function Home() {
     );
 
     return (
-      <main className="p-6 max-w-xl mx-auto">
+      <main className="p-4 sm:p-6 max-w-xl mx-auto">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
             <span>🗳️</span> Voting
           </h1>
           <div className="text-sm bg-[#2D6A4F] text-white px-4 py-2 rounded-full font-semibold">
@@ -1658,9 +1671,9 @@ export default function Home() {
   // --------------------------
   if (hunt?.status === "finished") {
     return (
-      <main className="p-6 max-w-xl mx-auto">
+      <main className="p-4 sm:p-6 max-w-xl mx-auto">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
             <span>🏆</span> Results
           </h1>
           <button 
@@ -1777,9 +1790,9 @@ export default function Home() {
   // Active Hunt UI
   // --------------------------
   return (
-    <main className="p-6 max-w-xl mx-auto pb-24">
+    <main className="p-4 sm:p-6 max-w-xl mx-auto pb-24">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
           <span>📸</span> Photo Hunt
         </h1>
         <button 
