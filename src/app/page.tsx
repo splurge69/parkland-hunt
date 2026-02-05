@@ -157,6 +157,7 @@ export default function Home() {
   // Name editing in lobby
   const [isEditingName, setIsEditingName] = useState(false);
   const [editingNameValue, setEditingNameValue] = useState("");
+  const [nameSaved, setNameSaved] = useState(false);
 
   // Voting state
   const [allSubmissions, setAllSubmissions] = useState<Submission[]>([]);
@@ -523,9 +524,36 @@ export default function Home() {
         return;
       }
 
-      setPrompts((data ?? []) as Prompt[]);
+      // Shuffle prompts randomly using Fisher-Yates algorithm
+      const shuffled = [...(data ?? [])] as Prompt[];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+
+      setPrompts(shuffled);
     })();
   }, [hunt?.pack]);
+
+  // Sort prompts: incomplete (idle/needs_photo/error) first, then completed
+  const sortedPrompts = useMemo(() => {
+    return [...prompts].sort((a, b) => {
+      const statusA = statusByPromptId[a.id] ?? "idle";
+      const statusB = statusByPromptId[b.id] ?? "idle";
+      
+      // Define which statuses are "incomplete"
+      const isIncomplete = (s: SubmissionStatus) => 
+        s === "idle" || s === "needs_photo" || s === "error";
+      
+      const aIncomplete = isIncomplete(statusA);
+      const bIncomplete = isIncomplete(statusB);
+      
+      // Incomplete prompts come first
+      if (aIncomplete && !bIncomplete) return -1;
+      if (!aIncomplete && bIncomplete) return 1;
+      return 0; // Keep original (shuffled) order within each group
+    });
+  }, [prompts, statusByPromptId]);
 
   // --------------------------
   // Load submissions for this player + hunt (photo persistence)
@@ -1131,6 +1159,41 @@ export default function Home() {
 
     const allFinished = allPlayers?.every((p) => p.finished_at != null);
     if (allFinished && allPlayers && allPlayers.length > 0) {
+      // Check if voting is meaningful (multiple users submitted to same prompts)
+      const { data: submissionsCheck } = await supabase
+        .from("submissions")
+        .select("prompt_id, player_id")
+        .eq("hunt_id", huntId);
+
+      // Group submissions by prompt and check if any prompt has 2+ different players
+      const promptPlayerMap = new Map<string, Set<string>>();
+      submissionsCheck?.forEach((s: { prompt_id: string; player_id: string }) => {
+        if (!promptPlayerMap.has(s.prompt_id)) {
+          promptPlayerMap.set(s.prompt_id, new Set());
+        }
+        promptPlayerMap.get(s.prompt_id)!.add(s.player_id);
+      });
+
+      const hasVotablePrompts = Array.from(promptPlayerMap.values()).some(
+        (players) => players.size >= 2
+      );
+
+      if (!hasVotablePrompts) {
+        // Skip voting, go straight to finished
+        const { error: finishError } = await supabase
+          .from("hunts")
+          .update({ status: "finished" })
+          .eq("id", huntId);
+
+        if (finishError) {
+          console.error("Failed to finish hunt:", finishError);
+          return;
+        }
+
+        setHunt((prev) => (prev ? { ...prev, status: "finished" } : prev));
+        return;
+      }
+
       // Transition hunt to voting phase
       const { error: statusError } = await supabase
         .from("hunts")
@@ -1170,36 +1233,63 @@ export default function Home() {
   if (!huntId) {
     return (
       <main className="p-6 max-w-2xl mx-auto">
-        <h1 className="text-4xl font-bold mb-2">Photo Hunt</h1>
-        <p className="text-gray-600 mb-2">
-          The photo scavenger hunt for walking with friends. Submit your photos and vote for your favourites.
-        </p>
-        <p className="text-gray-500 text-sm mb-8">
-          Create a new hunt (share the code with friends), or join a friend&apos;s hunt using their code.
-        </p>
+        <div className="text-center mb-8">
+          <h1 className="text-5xl font-extrabold mb-3 text-[#2D6A4F]">📸 Photo Hunt</h1>
+          <p className="text-lg text-[#1B1B1B] mb-2">
+            The photo scavenger hunt for walking with friends.
+          </p>
+          <p className="text-[#6B7280]">
+            Submit your photos and vote for your favourites!
+          </p>
+        </div>
 
         {error && (
-          <div className="mb-6 p-3 border border-red-300 text-red-700">
-            Error: {error}
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700">
+            {error}
           </div>
         )}
 
         {/* Your Name */}
-        <div className="border rounded p-6 mb-6">
-          <h2 className="text-2xl font-semibold mb-4">Your Name</h2>
-          <input
-            className="border rounded p-3 w-full text-lg"
-            placeholder="Enter your name"
-            value={playerName}
-            onChange={(e) => savePlayerName(e.target.value)}
-          />
+        <div className="bg-white rounded-2xl p-6 mb-5 shadow-md border border-[#E5E7EB]">
+          <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+            <span>👤</span> Your Name
+          </h2>
+          <div className="flex gap-3">
+            <input
+              className="bg-white border-2 border-[#E5E7EB] rounded-xl p-3 flex-1 text-lg focus:outline-none focus:ring-2 focus:ring-[#2D6A4F] focus:border-transparent placeholder:text-gray-400"
+              placeholder="Enter your name"
+              value={playerName}
+              onChange={(e) => {
+                setPlayerName(e.target.value);
+                setNameSaved(false);
+              }}
+            />
+            <button
+              className="px-6 py-3 bg-[#2D6A4F] hover:bg-[#245840] text-white font-semibold rounded-xl transition-colors"
+              onClick={() => {
+                savePlayerName(playerName);
+                setNameSaved(true);
+                setTimeout(() => setNameSaved(false), 2000);
+              }}
+            >
+              Save
+            </button>
+          </div>
+          {nameSaved && (
+            <div className="mt-3 text-sm text-[#059669] font-medium">
+              ✓ Name saved!
+            </div>
+          )}
         </div>
 
-        <div className="border rounded p-6 mb-6">
-          <h2 className="text-2xl font-semibold mb-4">Create a Hunt</h2>
+        {/* Create a Hunt */}
+        <div className="bg-white rounded-2xl p-6 mb-5 shadow-md border border-[#E5E7EB]">
+          <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+            <span>🎯</span> Create a Hunt
+          </h2>
           <div className="flex gap-3">
             <select
-              className="border rounded p-3 flex-1 text-lg"
+              className="bg-white border-2 border-[#E5E7EB] rounded-xl p-3 flex-1 text-lg focus:outline-none focus:ring-2 focus:ring-[#2D6A4F] focus:border-transparent"
               value={createPack}
               onChange={(e) => setCreatePack(e.target.value)}
             >
@@ -1209,17 +1299,20 @@ export default function Home() {
                 </option>
               ))}
             </select>
-            <button className="px-6 py-3 bg-black text-white rounded" onClick={createHunt}>
+            <button 
+              className="px-6 py-3 bg-[#2D6A4F] hover:bg-[#245840] text-white font-semibold rounded-xl transition-colors" 
+              onClick={createHunt}
+            >
               Create
             </button>
           </div>
           {getPackDescription(createPack) && (
-            <div className="mt-3 text-sm text-gray-500">
+            <div className="mt-3 text-sm text-[#6B7280]">
               {getPackDescription(createPack)}
             </div>
           )}
           {getPackLocationInfo(createPack) && (
-            <div className="mt-2 text-sm text-gray-400 flex items-center gap-1">
+            <div className="mt-2 text-sm text-[#6B7280] flex items-center gap-1">
               <span>📍</span>
               {getPackLocationInfo(createPack)?.area && (
                 <span>{getPackLocationInfo(createPack)?.area}</span>
@@ -1234,16 +1327,22 @@ export default function Home() {
           )}
         </div>
 
-        <div className="border rounded p-6 mb-6">
-          <h2 className="text-2xl font-semibold mb-4">Join a Hunt</h2>
+        {/* Join a Hunt */}
+        <div className="bg-white rounded-2xl p-6 mb-5 shadow-md border border-[#E5E7EB]">
+          <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+            <span>🔗</span> Join a Hunt
+          </h2>
           <div className="flex gap-3">
             <input
-              className="border rounded p-3 flex-1 text-lg"
+              className="bg-white border-2 border-[#E5E7EB] rounded-xl p-3 flex-1 text-lg font-mono tracking-wider focus:outline-none focus:ring-2 focus:ring-[#2D6A4F] focus:border-transparent placeholder:text-gray-400"
               placeholder="ENTER CODE"
               value={joinCode}
               onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
             />
-            <button className="px-6 py-3 bg-black text-white rounded" onClick={joinHuntByCode}>
+            <button 
+              className="px-6 py-3 bg-[#E07A5F] hover:bg-[#C96A51] text-white font-semibold rounded-xl transition-colors" 
+              onClick={joinHuntByCode}
+            >
               Join
             </button>
           </div>
@@ -1251,28 +1350,32 @@ export default function Home() {
 
         {/* Your Hunts (history) */}
         {playerGames.length > 0 && (
-          <div className="border rounded p-6">
-            <h2 className="text-2xl font-semibold mb-4">Your Hunts</h2>
+          <div className="bg-white rounded-2xl p-6 shadow-md border border-[#E5E7EB]">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <span>📋</span> Your Hunts
+            </h2>
             <div className="space-y-3">
               {playerGames.map((game) => (
                 <div
                   key={game.hunt_id}
-                  className="flex items-center justify-between p-3 border rounded"
+                  className="flex items-center justify-between p-4 bg-[#FEFAE0] rounded-xl border border-[#E5E7EB]"
                 >
                   <div>
-                    <div className="font-mono font-bold text-lg">{game.hunt_code}</div>
-                    <div className="text-sm text-gray-500">
+                    <div className="font-mono font-bold text-lg tracking-wider">{game.hunt_code}</div>
+                    <div className="text-sm text-[#6B7280]">
                       {getPackName(game.pack)}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     {/* Status badge */}
                     <span
-                      className={`text-xs px-2 py-1 rounded-full ${
+                      className={`text-xs px-3 py-1 rounded-full font-semibold ${
                         game.hunt_status === "lobby"
-                          ? "bg-yellow-100 text-yellow-800"
+                          ? "bg-amber-100 text-amber-800"
                           : game.hunt_status === "active"
-                          ? "bg-green-100 text-green-800"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : game.hunt_status === "voting"
+                          ? "bg-purple-100 text-purple-800"
                           : "bg-gray-100 text-gray-600"
                       }`}
                     >
@@ -1281,14 +1384,14 @@ export default function Home() {
                     {/* Actions */}
                     {game.hunt_status !== "finished" && (
                       <button
-                        className="px-3 py-1 bg-black text-white text-sm rounded"
+                        className="px-4 py-2 bg-[#2D6A4F] hover:bg-[#245840] text-white text-sm font-semibold rounded-xl transition-colors"
                         onClick={() => resumeGame(game.hunt_id)}
                       >
                         Resume
                       </button>
                     )}
                     <button
-                      className="px-3 py-1 border text-sm rounded text-red-600 border-red-200 hover:bg-red-50"
+                      className="px-4 py-2 border border-red-200 text-sm rounded-xl text-red-600 hover:bg-red-50 transition-colors"
                       onClick={() => leaveGame(game.hunt_id)}
                     >
                       Leave
@@ -1308,46 +1411,53 @@ export default function Home() {
   // --------------------------
   if (hunt?.status === "lobby") {
     return (
-      <main className="p-6 max-w-xl mx-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-4xl font-bold">Waiting Room</h1>
-          <button className="text-sm underline text-gray-600" onClick={changeHunt}>
-            Leave
+      <main className="p-6 max-w-xl mx-auto pb-24">
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
+            <span>⏳</span> Waiting Room
+          </h1>
+          <button 
+            className="text-sm text-[#6B7280] hover:text-[#E07A5F] transition-colors" 
+            onClick={changeHunt}
+          >
+            ← Leave
           </button>
         </div>
 
         {error && (
-          <div className="mb-4 p-3 border border-red-300 text-red-700">
-            Error: {error}
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700">
+            {error}
           </div>
         )}
 
         {/* Share code */}
-        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded text-center">
-          <div className="text-sm text-blue-700 mb-1">
+        <div className="mb-5 p-6 bg-[#2D6A4F] rounded-2xl text-center shadow-lg">
+          <div className="text-sm text-emerald-200 mb-2">
             Share this code with friends
           </div>
-          <div className="text-4xl font-mono font-bold text-blue-900 tracking-widest">
+          <div className="text-5xl font-mono font-extrabold text-white tracking-[0.3em]">
             {hunt.code}
           </div>
         </div>
 
         {/* Pack info */}
         {hunt.pack && (
-          <div className="mb-6 p-4 bg-gray-50 rounded border">
-            <div className="text-sm text-gray-500 mb-1">Pack</div>
-            <div className="text-lg font-semibold">{getPackName(hunt.pack)}</div>
+          <div className="mb-5 p-5 bg-white rounded-2xl border border-[#E5E7EB] shadow-sm">
+            <div className="text-xs text-[#6B7280] uppercase tracking-wider mb-1">Pack</div>
+            <div className="text-lg font-bold text-[#1B1B1B]">{getPackName(hunt.pack)}</div>
             {getPackDescription(hunt.pack) && (
-              <div className="text-sm text-gray-600 mt-1">{getPackDescription(hunt.pack)}</div>
+              <div className="text-sm text-[#6B7280] mt-1">{getPackDescription(hunt.pack)}</div>
             )}
-            <div className="text-sm text-gray-400 mt-1">{prompts.length} prompts</div>
+            <div className="text-sm text-[#6B7280] mt-2 flex items-center gap-1">
+              <span>📸</span> {prompts.length} prompts
+            </div>
           </div>
         )}
 
         {/* Players list */}
         <div className="mb-6">
-          <div className="text-sm text-gray-500 mb-2">
-            Players ({playerCount})
+          <div className="text-sm text-[#6B7280] mb-3 font-semibold flex items-center gap-2">
+            <span>👥</span> Players ({playerCount})
           </div>
           <div className="space-y-2">
             {huntPlayers.map((p) => {
@@ -1355,27 +1465,29 @@ export default function Home() {
               return (
                 <div
                   key={p.id}
-                  className={`flex items-center justify-between p-3 border rounded ${
-                    isCurrentPlayer ? "bg-blue-50 border-blue-200" : "bg-white"
+                  className={`flex items-center justify-between p-4 rounded-xl border transition-all ${
+                    isCurrentPlayer 
+                      ? "bg-emerald-50 border-emerald-200" 
+                      : "bg-white border-[#E5E7EB]"
                   }`}
                 >
                   {isCurrentPlayer && isEditingName ? (
                     <div className="flex gap-2 flex-1">
                       <input
-                        className="border rounded px-2 py-1 flex-1"
+                        className="border border-[#E5E7EB] rounded-xl px-3 py-2 flex-1 focus:outline-none focus:ring-2 focus:ring-[#2D6A4F]"
                         value={editingNameValue}
                         onChange={(e) => setEditingNameValue(e.target.value)}
                         placeholder="Your name"
                         autoFocus
                       />
                       <button
-                        className="px-3 py-1 bg-black text-white rounded text-sm"
+                        className="px-4 py-2 bg-[#2D6A4F] text-white rounded-xl text-sm font-semibold"
                         onClick={() => updateDisplayName(editingNameValue)}
                       >
                         Save
                       </button>
                       <button
-                        className="px-3 py-1 border rounded text-sm"
+                        className="px-4 py-2 border border-[#E5E7EB] rounded-xl text-sm"
                         onClick={() => setIsEditingName(false)}
                       >
                         Cancel
@@ -1384,17 +1496,17 @@ export default function Home() {
                   ) : (
                     <>
                       <div className="flex items-center gap-2">
-                        <span className="font-medium">
+                        <span className="font-semibold text-[#1B1B1B]">
                           {p.display_name || "Anonymous"}
                         </span>
                         {isCurrentPlayer && (
-                          <span className="text-xs text-blue-600">(You)</span>
+                          <span className="text-xs text-emerald-600 font-medium">(You)</span>
                         )}
                       </div>
                       <div className="flex items-center gap-2">
                         {isCurrentPlayer && (
                           <button
-                            className="text-xs text-blue-600 underline"
+                            className="text-xs text-[#2D6A4F] hover:underline font-medium"
                             onClick={() => {
                               setEditingNameValue(p.display_name || "");
                               setIsEditingName(true);
@@ -1404,8 +1516,8 @@ export default function Home() {
                           </button>
                         )}
                         {p.role === "host" && (
-                          <span className="text-xs px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full">
-                            Host
+                          <span className="text-xs px-3 py-1 bg-amber-100 text-amber-800 rounded-full font-semibold">
+                            👑 Host
                           </span>
                         )}
                       </div>
@@ -1418,13 +1530,13 @@ export default function Home() {
         </div>
 
         {/* Start button */}
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t">
+        <div className="fixed bottom-0 left-0 right-0 bg-[#FEFAE0] border-t border-[#E5E7EB]">
           <div className="max-w-xl mx-auto p-4">
             <button
-              className="w-full py-4 bg-green-600 text-white rounded font-semibold text-lg"
+              className="w-full py-4 bg-[#E07A5F] hover:bg-[#C96A51] text-white rounded-2xl font-bold text-lg shadow-lg transition-colors"
               onClick={startGame}
             >
-              Start Game
+              🚀 Start Game
             </button>
           </div>
         </div>
@@ -1440,12 +1552,14 @@ export default function Home() {
     if (promptsWithSubmissions.length === 0) {
       return (
         <main className="p-6 max-w-xl mx-auto">
-          <h1 className="text-4xl font-bold mb-4">Voting</h1>
-          <div className="text-center py-8 text-gray-500">
+          <h1 className="text-3xl font-extrabold text-[#2D6A4F] mb-6 flex items-center gap-2">
+            <span>🗳️</span> Voting
+          </h1>
+          <div className="text-center py-8 text-[#6B7280] bg-white rounded-2xl border border-[#E5E7EB]">
             No photos were submitted. Finishing hunt...
           </div>
           <button
-            className="w-full py-4 bg-black text-white rounded"
+            className="w-full mt-6 py-4 bg-[#2D6A4F] hover:bg-[#245840] text-white rounded-2xl font-bold text-lg shadow-lg transition-colors"
             onClick={transitionToFinished}
           >
             View Results
@@ -1461,24 +1575,26 @@ export default function Home() {
 
     return (
       <main className="p-6 max-w-xl mx-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-4xl font-bold">Voting</h1>
-          <div className="text-sm text-gray-500">
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
+            <span>🗳️</span> Voting
+          </h1>
+          <div className="text-sm bg-[#2D6A4F] text-white px-4 py-2 rounded-full font-semibold">
             {currentPromptIndex + 1} / {promptsWithSubmissions.length}
           </div>
         </div>
 
         {error && (
-          <div className="mb-4 p-3 border border-red-300 text-red-700">
-            Error: {error}
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700">
+            {error}
           </div>
         )}
 
         {/* Current prompt */}
         {currentPrompt && (
-          <div className="mb-6 p-4 bg-gray-50 rounded border text-center">
-            <div className="text-sm text-gray-500 mb-1">Vote for the best photo of:</div>
-            <div className="text-lg font-semibold">{currentPrompt.text}</div>
+          <div className="mb-6 p-5 bg-white rounded-2xl border border-[#E5E7EB] shadow-sm text-center">
+            <div className="text-sm text-[#6B7280] mb-2">Vote for the best photo of:</div>
+            <div className="text-xl font-bold text-[#1B1B1B]">{currentPrompt.text}</div>
           </div>
         )}
 
@@ -1491,29 +1607,32 @@ export default function Home() {
             return (
               <div
                 key={submission.id}
-                className={`border rounded overflow-hidden ${
-                  isOwnSubmission ? "opacity-50" : ""
-                }`}
+                className="bg-white rounded-2xl overflow-hidden border border-[#E5E7EB] shadow-sm"
               >
                 {submissionUrls[submission.id] && (
                   <img
                     src={submissionUrls[submission.id]}
                     alt={`${submission.display_name}'s photo`}
-                    className="w-full h-48 object-cover"
+                    className="w-full h-56 object-cover"
                   />
                 )}
-                <div className="p-3 flex items-center justify-between bg-white">
-                  <span className="font-medium">{submission.display_name}</span>
-                  {!isOwnSubmission && !hasVoted && (
+                <div className="p-4 flex items-center justify-between">
+                  <span className="font-semibold text-[#1B1B1B]">
+                    {submission.display_name}
+                    {isOwnSubmission && (
+                      <span className="text-xs text-[#6B7280] ml-2 font-normal">(You)</span>
+                    )}
+                  </span>
+                  {!hasVoted && (
                     <button
-                      className="px-4 py-2 bg-green-600 text-white rounded"
+                      className="px-6 py-2 bg-[#2D6A4F] hover:bg-[#245840] text-white rounded-xl font-semibold transition-colors"
                       onClick={() => castVote(submission.id)}
                     >
-                      Vote
+                      👍 Vote
                     </button>
                   )}
-                  {isOwnSubmission && (
-                    <span className="text-sm text-gray-400">Your photo</span>
+                  {hasVoted && (
+                    <span className="text-sm text-[#6B7280]">Voted ✓</span>
                   )}
                 </div>
               </div>
@@ -1524,10 +1643,10 @@ export default function Home() {
         {/* Skip button */}
         <div className="mt-6">
           <button
-            className="w-full py-3 border border-gray-300 rounded text-gray-600"
+            className="w-full py-4 border-2 border-[#E5E7EB] rounded-2xl text-[#6B7280] font-semibold hover:bg-gray-50 transition-colors"
             onClick={advanceToNextPrompt}
           >
-            Skip this prompt
+            Skip this prompt →
           </button>
         </div>
       </main>
@@ -1540,63 +1659,62 @@ export default function Home() {
   if (hunt?.status === "finished") {
     return (
       <main className="p-6 max-w-xl mx-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-4xl font-bold">Results</h1>
-          <button className="text-sm underline text-gray-600" onClick={changeHunt}>
-            Exit
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
+            <span>🏆</span> Results
+          </h1>
+          <button 
+            className="text-sm text-[#6B7280] hover:text-[#E07A5F] transition-colors" 
+            onClick={changeHunt}
+          >
+            ← Exit
           </button>
         </div>
 
         {error && (
-          <div className="mb-4 p-3 border border-red-300 text-red-700">
-            Error: {error}
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700">
+            {error}
           </div>
         )}
 
         {!results ? (
-          <div className="text-center py-8 text-gray-500">Loading results...</div>
+          <div className="text-center py-12 text-[#6B7280] bg-white rounded-2xl border border-[#E5E7EB]">
+            Loading results...
+          </div>
         ) : (
           <>
             {/* Leaderboard */}
             <div className="mb-8">
-              <h2 className="text-2xl font-semibold mb-4">Leaderboard</h2>
-              <div className="space-y-2">
+              <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                <span>🎖️</span> Leaderboard
+              </h2>
+              <div className="space-y-3">
                 {results.leaderboard.map((player, index) => (
                   <div
                     key={player.display_name}
-                    className={`flex items-center justify-between p-4 rounded border ${
+                    className={`flex items-center justify-between p-4 rounded-2xl border shadow-sm ${
                       index === 0
-                        ? "bg-yellow-50 border-yellow-300"
+                        ? "bg-amber-50 border-amber-300"
                         : index === 1
                         ? "bg-gray-100 border-gray-300"
                         : index === 2
                         ? "bg-orange-50 border-orange-300"
-                        : "bg-white"
+                        : "bg-white border-[#E5E7EB]"
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      <span
-                        className={`text-2xl font-bold ${
-                          index === 0
-                            ? "text-yellow-600"
-                            : index === 1
-                            ? "text-gray-500"
-                            : index === 2
-                            ? "text-orange-600"
-                            : "text-gray-400"
-                        }`}
-                      >
-                        #{index + 1}
+                      <span className="text-2xl">
+                        {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `#${index + 1}`}
                       </span>
-                      <span className="font-medium">{player.display_name}</span>
+                      <span className="font-semibold text-[#1B1B1B]">{player.display_name}</span>
                     </div>
-                    <div className="text-lg font-semibold">
+                    <div className="text-lg font-bold text-[#2D6A4F]">
                       {player.total_votes} vote{player.total_votes !== 1 ? "s" : ""}
                     </div>
                   </div>
                 ))}
                 {results.leaderboard.length === 0 && (
-                  <div className="text-center text-gray-500 py-4">
+                  <div className="text-center text-[#6B7280] py-6 bg-white rounded-2xl border border-[#E5E7EB]">
                     No votes were cast
                   </div>
                 )}
@@ -1605,12 +1723,14 @@ export default function Home() {
 
             {/* Prompt Winners */}
             <div className="mb-8">
-              <h2 className="text-2xl font-semibold mb-4">Best Photos</h2>
+              <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                <span>📸</span> Best Photos
+              </h2>
               <div className="space-y-4">
                 {results.promptWinners.map(({ prompt, winner }) => (
-                  <div key={prompt.id} className="border rounded overflow-hidden">
-                    <div className="p-3 bg-gray-50 border-b">
-                      <div className="font-medium">{prompt.text}</div>
+                  <div key={prompt.id} className="bg-white rounded-2xl overflow-hidden border border-[#E5E7EB] shadow-sm">
+                    <div className="p-4 bg-[#FEFAE0] border-b border-[#E5E7EB]">
+                      <div className="font-bold text-[#1B1B1B]">{prompt.text}</div>
                     </div>
                     {winner ? (
                       <div>
@@ -1618,19 +1738,21 @@ export default function Home() {
                           <img
                             src={winner.photo_url}
                             alt={`${winner.display_name}'s winning photo`}
-                            className="w-full h-48 object-cover"
+                            className="w-full h-56 object-cover"
                           />
                         )}
-                        <div className="p-3 flex items-center justify-between">
-                          <span className="font-medium">{winner.display_name}</span>
-                          <span className="text-sm text-green-600">
+                        <div className="p-4 flex items-center justify-between">
+                          <span className="font-semibold text-[#1B1B1B] flex items-center gap-2">
+                            <span>🏅</span> {winner.display_name}
+                          </span>
+                          <span className="text-sm font-semibold text-[#2D6A4F] bg-emerald-50 px-3 py-1 rounded-full">
                             {winner.votes} vote{winner.votes !== 1 ? "s" : ""}
                           </span>
                         </div>
                       </div>
                     ) : (
-                      <div className="p-4 text-center text-gray-500">
-                        No winner
+                      <div className="p-6 text-center text-[#6B7280]">
+                        No submissions for this prompt
                       </div>
                     )}
                   </div>
@@ -1640,10 +1762,10 @@ export default function Home() {
 
             {/* Return home button */}
             <button
-              className="w-full py-4 bg-black text-white rounded font-semibold text-lg"
+              className="w-full py-4 bg-[#2D6A4F] hover:bg-[#245840] text-white rounded-2xl font-bold text-lg shadow-lg transition-colors"
               onClick={changeHunt}
             >
-              Return Home
+              🏠 Return Home
             </button>
           </>
         )}
@@ -1655,45 +1777,51 @@ export default function Home() {
   // Active Hunt UI
   // --------------------------
   return (
-    <main className="p-6 max-w-xl mx-auto">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-4xl font-bold">Photo Hunt</h1>
-        <button className="text-sm underline text-gray-600" onClick={changeHunt}>
-          Change hunt
+    <main className="p-6 max-w-xl mx-auto pb-24">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
+          <span>📸</span> Photo Hunt
+        </h1>
+        <button 
+          className="text-sm text-[#6B7280] hover:text-[#E07A5F] transition-colors" 
+          onClick={changeHunt}
+        >
+          ← Leave
         </button>
       </div>
 
       {hunt?.pack && (
-        <div className="mb-4 p-3 bg-gray-50 rounded border">
-          <div className="text-sm text-gray-500">Pack</div>
-          <div className="font-medium text-gray-900">{getPackName(hunt.pack)}</div>
+        <div className="mb-4 p-4 bg-white rounded-2xl border border-[#E5E7EB] shadow-sm">
+          <div className="text-xs text-[#6B7280] uppercase tracking-wider">Pack</div>
+          <div className="font-bold text-[#1B1B1B]">{getPackName(hunt.pack)}</div>
           {getPackDescription(hunt.pack) && (
-            <div className="text-sm text-gray-600 mt-1">{getPackDescription(hunt.pack)}</div>
+            <div className="text-sm text-[#6B7280] mt-1">{getPackDescription(hunt.pack)}</div>
           )}
         </div>
       )}
 
       {/* Players in hunt */}
       {playerCount > 0 && (
-        <div className="mb-4 p-3 bg-gray-50 rounded border">
+        <div className="mb-4 p-4 bg-white rounded-2xl border border-[#E5E7EB] shadow-sm">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-600">
-              <span className="font-medium text-gray-900">{playerCount}</span>{" "}
-              {playerCount === 1 ? "player" : "players"} in hunt
+            <span className="text-[#6B7280] flex items-center gap-1">
+              <span>👥</span>
+              <span className="font-semibold text-[#1B1B1B]">{playerCount}</span>{" "}
+              {playerCount === 1 ? "player" : "players"}
             </span>
-            <span className="text-gray-500">
+            <span className="text-[#6B7280]">
               {finishedCount} / {playerCount} finished
             </span>
           </div>
           {huntPlayers.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               {huntPlayers.map((p) => (
                 <span
                   key={p.id}
-                  className={`text-xs px-2 py-1 rounded-full ${
+                  className={`text-xs px-3 py-1 rounded-full font-medium ${
                     p.finished_at
-                      ? "bg-green-100 text-green-700"
-                      : "bg-gray-200 text-gray-600"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-gray-100 text-[#6B7280]"
                   }`}
                 >
                   {p.display_name || "Anonymous"}
@@ -1707,23 +1835,25 @@ export default function Home() {
 
       {/* Progress */}
       {total > 0 && (
-        <div className="mb-6">
-          <div className="flex items-center justify-between text-sm text-gray-600">
-            <span>
+        <div className="mb-6 p-4 bg-white rounded-2xl border border-[#E5E7EB] shadow-sm">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-[#6B7280]">
               Completed{" "}
-              <span className="font-medium text-gray-900">{completed}</span> /{" "}
-              <span className="font-medium text-gray-900">{total}</span>
+              <span className="font-bold text-[#1B1B1B]">{completed}</span> /{" "}
+              <span className="font-bold text-[#1B1B1B]">{total}</span>
             </span>
             {finishedAt ? (
-              <span className="text-green-700 font-medium">Finished ✅</span>
+              <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                <span>✅</span> Finished
+              </span>
             ) : (
-              <span className="text-gray-500">In progress</span>
+              <span className="text-[#6B7280]">In progress...</span>
             )}
           </div>
 
-          <div className="mt-2 h-2 w-full rounded bg-gray-200">
+          <div className="mt-3 h-3 w-full rounded-full bg-gray-100 overflow-hidden">
             <div
-              className="h-2 rounded bg-green-600 transition-all"
+              className="h-3 rounded-full bg-[#2D6A4F] transition-all duration-300"
               style={{ width: total === 0 ? "0%" : `${(completed / total) * 100}%` }}
             />
           </div>
@@ -1740,82 +1870,106 @@ export default function Home() {
       />
 
       {error && (
-        <div className="mb-4 p-3 border border-red-300 text-red-700">
-          Error: {error}
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700">
+          {error}
         </div>
       )}
 
-      <ul className="space-y-3 pb-24">
-        {prompts.map((p) => {
+      <ul className="space-y-3">
+        {sortedPrompts.map((p) => {
           const status = statusByPromptId[p.id] ?? "idle";
           const isBusy = status === "saving" || status === "uploading";
 
           // Contextual label based on status
           const statusLabel = {
-            idle: "Take a photo of:",
-            saving: "Saving...",
-            needs_photo: "Tap to add photo:",
-            uploading: "Uploading...",
-            saved: "Photo taken!",
-            error: "Error - tap to retry:",
+            idle: "📷 Take a photo of:",
+            saving: "💾 Saving...",
+            needs_photo: "👆 Tap to add photo:",
+            uploading: "⏳ Uploading...",
+            saved: "✅ Photo taken!",
+            error: "❌ Error - tap to retry:",
           }[status];
 
-          const statusColor = {
-            idle: "text-gray-500",
-            saving: "text-yellow-600",
+          const statusBgColor = {
+            idle: "bg-white",
+            saving: "bg-amber-50",
+            needs_photo: "bg-blue-50",
+            uploading: "bg-amber-50",
+            saved: "bg-emerald-50",
+            error: "bg-red-50",
+          }[status];
+
+          const statusTextColor = {
+            idle: "text-[#6B7280]",
+            saving: "text-amber-600",
             needs_photo: "text-blue-600",
-            uploading: "text-yellow-600",
-            saved: "text-green-600",
+            uploading: "text-amber-600",
+            saved: "text-emerald-600",
             error: "text-red-600",
+          }[status];
+
+          const borderColor = {
+            idle: "border-[#E5E7EB]",
+            saving: "border-amber-200",
+            needs_photo: "border-blue-200",
+            uploading: "border-amber-200",
+            saved: "border-emerald-200",
+            error: "border-red-200",
           }[status];
 
           return (
             <li
               key={p.id}
-              className={`p-3 border rounded cursor-pointer ${isBusy ? "opacity-60 cursor-wait" : ""}`}
+              className={`p-4 rounded-2xl cursor-pointer border shadow-sm transition-all ${statusBgColor} ${borderColor} ${isBusy ? "opacity-60 cursor-wait" : "hover:shadow-md"}`}
               onClick={() => {
                 if (!isBusy) onPromptClick(p.id);
               }}
             >
-              <div className={`text-xs font-medium mb-1 ${statusColor}`}>
+              <div className={`text-xs font-semibold mb-2 ${statusTextColor}`}>
                 {statusLabel}
               </div>
 
-              <div className="font-medium text-lg">{p.text}</div>
+              <div className="font-bold text-lg text-[#1B1B1B]">{p.text}</div>
 
               {photoUrlByPromptId[p.id] && (
-                <div className="mt-2">
-                  <img className="w-full rounded border" alt="submission" src={photoUrlByPromptId[p.id]} />
+                <div className="mt-3">
+                  <img className="w-full rounded-xl border border-[#E5E7EB]" alt="submission" src={photoUrlByPromptId[p.id]} />
                   <button
-                    className="mt-2 text-sm text-blue-600 underline"
+                    className="mt-3 text-sm text-[#E07A5F] hover:underline font-semibold"
                     onClick={(e) => {
                       e.stopPropagation();
                       onPromptClick(p.id);
                     }}
                   >
-                    Retake photo
+                    🔄 Retake photo
                   </button>
                 </div>
               )}
 
               {!photoUrlByPromptId[p.id] && photoPathByPromptId[p.id] && (
-                <div className="mt-2 text-xs text-gray-500">Photo attached (loading preview...)</div>
+                <div className="mt-2 text-xs text-[#6B7280]">Photo attached (loading preview...)</div>
               )}
             </li>
           );
         })}
       </ul>
 
-      {/* Bottom buttons (requested) */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t">
+      {/* Bottom buttons */}
+      <div className="fixed bottom-0 left-0 right-0 bg-[#FEFAE0] border-t border-[#E5E7EB]">
         <div className="max-w-xl mx-auto p-4">
           {!finishedAt ? (
-            <button className="w-full py-4 bg-black text-white rounded" onClick={finishHunt}>
-              Finish Hunt
+            <button 
+              className="w-full py-4 bg-[#2D6A4F] hover:bg-[#245840] text-white rounded-2xl font-bold text-lg shadow-lg transition-colors" 
+              onClick={finishHunt}
+            >
+              🏁 Finish Hunt
             </button>
           ) : (
-            <button className="w-full py-4 bg-gray-200 text-black rounded" onClick={undoFinish}>
-              Undo Finish
+            <button 
+              className="w-full py-4 bg-gray-200 hover:bg-gray-300 text-[#1B1B1B] rounded-2xl font-bold text-lg transition-colors" 
+              onClick={undoFinish}
+            >
+              ↩️ Undo Finish
             </button>
           )}
         </div>
