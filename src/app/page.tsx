@@ -1548,7 +1548,7 @@ export default function Home() {
           </div>
           {getPackDescription(createPack) && (
             <div className="mt-3 text-sm text-[#6B7280]">
-              {getPackDescription(createPack)}
+              About the hunt: {getPackDescription(createPack)}
             </div>
           )}
           {getPackLocationInfo(createPack) && (
