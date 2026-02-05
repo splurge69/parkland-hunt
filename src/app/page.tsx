@@ -884,7 +884,7 @@ export default function Home() {
 
     const { error } = await supabase
       .from("hunts")
-      .update({ status: "active" })
+      .update({ status: "active", starts_at: new Date().toISOString() })
       .eq("id", huntId);
 
     if (error) {
@@ -1108,7 +1108,7 @@ export default function Home() {
 
     const { error } = await supabase
       .from("hunts")
-      .update({ status: "finished" })
+      .update({ status: "finished", ends_at: new Date().toISOString() })
       .eq("id", huntId);
 
     if (error) {
@@ -1206,7 +1206,7 @@ export default function Home() {
         // Skip voting, go straight to finished
         const { error: finishError } = await supabase
           .from("hunts")
-          .update({ status: "finished" })
+          .update({ status: "finished", ends_at: new Date().toISOString() })
           .eq("id", huntId);
 
         if (finishError) {
