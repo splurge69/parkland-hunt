@@ -195,7 +195,7 @@ export default function Home() {
       prompt: Prompt;
       winner: { display_name: string; votes: number; photo_url: string } | null;
     }>;
-    leaderboard: Array<{ display_name: string; total_votes: number }>;
+    leaderboard: Array<{ player_id: string; display_name: string; total_votes: number }>;
   } | null>(null);
 
   // upload flow
@@ -1178,7 +1178,7 @@ export default function Home() {
       }> = [];
 
       // Build leaderboard (votes per player)
-      const playerVotes: Record<string, { display_name: string; total_votes: number }> = {};
+      const playerVotes: Record<string, { player_id: string; display_name: string; total_votes: number }> = {};
 
       // Load photo URLs and build player vote counts
       const photoUrls: Record<string, string> = {};
