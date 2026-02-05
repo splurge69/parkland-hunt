@@ -2246,11 +2246,22 @@ export default function Home() {
                 if (!isBusy) onPromptClick(p.id);
               }}
             >
-              <div className={`text-xs font-semibold mb-2 ${statusTextColor}`}>
-                {statusLabel}
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <div className={`text-xs font-semibold mb-2 ${statusTextColor}`}>
+                    {statusLabel}
+                  </div>
+                  <div className="font-bold text-lg text-[#1B1B1B]">{p.text}</div>
+                </div>
+                {/* Show camera icon placeholder for idle prompts without photos */}
+                {status === "idle" && !photoUrlByPromptId[p.id] && (
+                  <img 
+                    src="/camera-icon.png" 
+                    alt="Take a photo" 
+                    className="w-10 h-10 opacity-40 flex-shrink-0"
+                  />
+                )}
               </div>
-
-              <div className="font-bold text-lg text-[#1B1B1B]">{p.text}</div>
 
               {photoUrlByPromptId[p.id] && (
                 <div className="mt-3">
