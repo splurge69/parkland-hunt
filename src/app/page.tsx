@@ -119,23 +119,35 @@ function packLabel(pack: string) {
 export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
-  // Player identity (device-local) - load from localStorage on init
-  const [playerId, setPlayerId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("player_id");
-  });
-  const [playerName, setPlayerName] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    return localStorage.getItem("player_name") || "";
-  });
+  // #region agent log
+  // Hydration flag - ensures server and client render the same initial UI
+  const [hasMounted, setHasMounted] = useState(false);
+  // #endregion
 
-  // Hunt selection - load from localStorage on init
-  const [huntId, setHuntId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("hunt_id");
-  });
+  // Player identity (device-local) - start null for SSR compatibility
+  const [playerId, setPlayerId] = useState<string | null>(null);
+  const [playerName, setPlayerName] = useState<string>("");
+
+  // Hunt selection - start null for SSR compatibility
+  const [huntId, setHuntId] = useState<string | null>(null);
   const [hunt, setHunt] = useState<Hunt | null>(null);
   const [huntLoading, setHuntLoading] = useState(false);
+
+  // #region agent log
+  // Load localStorage values AFTER mount (hydration-safe)
+  useEffect(() => {
+    const storedPlayerId = localStorage.getItem("player_id");
+    const storedPlayerName = localStorage.getItem("player_name") || "";
+    const storedHuntId = localStorage.getItem("hunt_id");
+    
+    fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:loadLocalStorage',message:'Loading localStorage after mount',data:{storedPlayerId:!!storedPlayerId,storedPlayerName:!!storedPlayerName,storedHuntId:!!storedHuntId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+    
+    setPlayerId(storedPlayerId);
+    setPlayerName(storedPlayerName);
+    setHuntId(storedHuntId);
+    setHasMounted(true);
+  }, []);
+  // #endregion
 
   // Create/Join UI
   const [availablePacks, setAvailablePacks] = useState<Pack[]>([]);
@@ -1389,7 +1401,31 @@ export default function Home() {
   // --------------------------
   // UI
   // --------------------------
+  
+  // #region agent log
+  // Hydration guard - render consistent loading state until client is ready
+  if (!hasMounted) {
+    if (typeof window !== 'undefined') {
+      fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:hydrationGuard',message:'Rendering hydration loading state',data:{hasMounted,huntId:!!huntId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+    }
+    return (
+      <main className="p-4 sm:p-6 max-w-2xl mx-auto">
+        <div className="text-center mb-8">
+          <h1 className="text-5xl font-extrabold mb-3 text-[#2D6A4F]">📸 Photo Hunt</h1>
+          <p className="text-lg text-[#1B1B1B] mb-2">
+            The photo scavenger hunt for walking with friends.
+          </p>
+          <p className="text-[#6B7280]">Loading...</p>
+        </div>
+      </main>
+    );
+  }
+  // #endregion
+  
   if (!huntId) {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:homeScreen',message:'Rendering home screen (no huntId)',data:{hasMounted,huntId:!!huntId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
     return (
       <main className="p-4 sm:p-6 max-w-2xl mx-auto">
         <div className="text-center mb-8">
