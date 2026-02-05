@@ -672,6 +672,10 @@ export default function Home() {
   useEffect(() => {
     if (!huntId || !playerId) return;
 
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:loadSubmissions:start',message:'Starting to load existing submissions',data:{huntId,playerId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+
     (async () => {
       const { data, error } = await supabase
         .from("submissions")
@@ -701,6 +705,10 @@ export default function Home() {
           nextStatus[row.prompt_id] = "needs_photo";
         }
       }
+
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:loadSubmissions:complete',message:'Loaded existing submissions',data:{submissionCount:data?.length??0,submissionIds:Object.keys(nextSubmissionIds),huntId,playerId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
 
       setSubmissionIdByPromptId(nextSubmissionIds);
       setPhotoPathByPromptId(nextPhotoPaths);
@@ -874,7 +882,14 @@ export default function Home() {
   // --------------------------
   async function ensureSubmission(promptId: string) {
     const existing = submissionIdByPromptId[promptId];
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:ensureSubmission',message:'Checking for existing submission',data:{promptId,existing,hasExisting:!!existing,huntId,playerId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,C,D'})}).catch(()=>{});
+    // #endregion
     if (existing) return existing;
+
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:ensureSubmission:inserting',message:'No existing submission found, inserting new one',data:{promptId,huntId,playerId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
+    // #endregion
 
     if (!huntId || !playerId) throw new Error("Missing huntId/playerId");
 
@@ -892,6 +907,9 @@ export default function Home() {
       .single();
 
     if (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:ensureSubmission:error',message:'Insert failed',data:{promptId,errorCode:error.code,errorMessage:error.message},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
+      // #endregion
       setStatusByPromptId((p) => ({ ...p, [promptId]: "error" }));
       throw error;
     }
@@ -902,6 +920,9 @@ export default function Home() {
   }
 
   async function onPromptClick(promptId: string) {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:onPromptClick',message:'Prompt clicked',data:{promptId,existingSubmissionId:submissionIdByPromptId[promptId],allSubmissionIds:Object.keys(submissionIdByPromptId),status:statusByPromptId[promptId]},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,C'})}).catch(()=>{});
+    // #endregion
     try {
       setActivePromptId(promptId);
       await ensureSubmission(promptId);
