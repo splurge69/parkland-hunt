@@ -48,6 +48,10 @@ type Pack = {
   slug: string;
   name: string;
   description: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  radius_km: number | null;
+  area: string | null;
 };
 
 type Submission = {
@@ -189,6 +193,15 @@ export default function Home() {
     return pack?.description ?? null;
   }
 
+  // Helper to get pack location info (area and distance)
+  function getPackLocationInfo(slug: string | null): { area: string | null; distance: number | null } | null {
+    if (!slug) return null;
+    const pack = availablePacks.find((p) => p.slug === slug);
+    if (!pack) return null;
+    if (!pack.area && !pack.radius_km) return null;
+    return { area: pack.area, distance: pack.radius_km };
+  }
+
   // Helper to save player name to localStorage
   function savePlayerName(name: string) {
     setPlayerName(name);
@@ -313,7 +326,7 @@ export default function Home() {
     (async () => {
       const { data, error } = await supabase
         .from("packs")
-        .select("slug, name, description")
+        .select("slug, name, description, latitude, longitude, radius_km, area")
         .order("name");
 
       if (error) {
@@ -1162,7 +1175,7 @@ export default function Home() {
           The photo scavenger hunt for walking with friends. Submit your photos and vote for your favourites.
         </p>
         <p className="text-gray-500 text-sm mb-8">
-          Create a new hunt (share the code with friends), or join a friend's hunt using their code.
+          Create a new hunt (share the code with friends), or join a friend&apos;s hunt using their code.
         </p>
 
         {error && (
@@ -1203,6 +1216,20 @@ export default function Home() {
           {getPackDescription(createPack) && (
             <div className="mt-3 text-sm text-gray-500">
               {getPackDescription(createPack)}
+            </div>
+          )}
+          {getPackLocationInfo(createPack) && (
+            <div className="mt-2 text-sm text-gray-400 flex items-center gap-1">
+              <span>📍</span>
+              {getPackLocationInfo(createPack)?.area && (
+                <span>{getPackLocationInfo(createPack)?.area}</span>
+              )}
+              {getPackLocationInfo(createPack)?.area && getPackLocationInfo(createPack)?.distance && (
+                <span>·</span>
+              )}
+              {getPackLocationInfo(createPack)?.distance && (
+                <span>~{getPackLocationInfo(createPack)?.distance} km</span>
+              )}
             </div>
           )}
         </div>
