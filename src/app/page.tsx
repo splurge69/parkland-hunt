@@ -34,6 +34,16 @@ type HuntPlayer = {
   role: string | null;
 };
 
+type PlayerGame = {
+  hunt_id: string;
+  hunt_code: string;
+  hunt_status: "lobby" | "active" | "finished";
+  pack: string | null;
+  joined_at: string;
+  finished_at: string | null;
+  role: string | null;
+};
+
 function getFileExt(name: string) {
   const parts = name.split(".");
   return parts.length > 1 ? parts.pop()!.toLowerCase() : "jpg";
@@ -122,6 +132,9 @@ export default function Home() {
   // Host status (for controlling game start)
   const [isHost, setIsHost] = useState(false);
 
+  // Player's game history
+  const [playerGames, setPlayerGames] = useState<PlayerGame[]>([]);
+
   // upload flow
   const [activePromptId, setActivePromptId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -160,6 +173,51 @@ export default function Home() {
       setPlayerId(data.id);
     })();
   }, [playerId]);
+
+  // --------------------------
+  // Load player's game history (only when on home screen)
+  // --------------------------
+  useEffect(() => {
+    if (!playerId || huntId) return; // Only fetch when on home screen
+
+    async function fetchPlayerGames() {
+      const { data, error } = await supabase
+        .from("hunt_players")
+        .select(`
+          hunt_id,
+          joined_at,
+          finished_at,
+          role,
+          hunts (
+            code,
+            status,
+            pack
+          )
+        `)
+        .eq("player_id", playerId)
+        .order("joined_at", { ascending: false });
+
+      if (error) {
+        console.error("Failed to load player games:", error);
+        return;
+      }
+
+      if (data) {
+        const games = data.map((row: any) => ({
+          hunt_id: row.hunt_id,
+          hunt_code: row.hunts?.code ?? "???",
+          hunt_status: row.hunts?.status ?? "finished",
+          pack: row.hunts?.pack,
+          joined_at: row.joined_at,
+          finished_at: row.finished_at,
+          role: row.role,
+        }));
+        setPlayerGames(games);
+      }
+    }
+
+    fetchPlayerGames();
+  }, [playerId, huntId]);
 
   // --------------------------
   // Load available packs from prompts
@@ -545,6 +603,35 @@ export default function Home() {
   }
 
   // --------------------------
+  // Game history actions
+  // --------------------------
+  function resumeGame(gameHuntId: string) {
+    localStorage.setItem("hunt_id", gameHuntId);
+    setHuntId(gameHuntId);
+  }
+
+  async function leaveGame(gameHuntId: string) {
+    if (!playerId) return;
+
+    const confirmed = window.confirm("Are you sure you want to leave this game?");
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("hunt_players")
+      .delete()
+      .eq("hunt_id", gameHuntId)
+      .eq("player_id", playerId);
+
+    if (error) {
+      setError(error.message);
+      return;
+    }
+
+    // Remove from local state
+    setPlayerGames((prev) => prev.filter((g) => g.hunt_id !== gameHuntId));
+  }
+
+  // --------------------------
   // Submissions + upload
   // --------------------------
   async function ensureSubmission(promptId: string) {
@@ -650,7 +737,7 @@ export default function Home() {
   );
 
   // --------------------------
-  // Start game (host only)
+  // Start game (any player can start)
   // --------------------------
   async function startGame() {
     if (!huntId) return;
@@ -662,8 +749,11 @@ export default function Home() {
 
     if (error) {
       setError(error.message);
+      return;
     }
-    // No need to setHunt here - real-time subscription will update it
+
+    // Update local state immediately (don't wait for real-time)
+    setHunt((prev) => (prev ? { ...prev, status: "active" } : null));
   }
 
   // --------------------------
@@ -774,6 +864,57 @@ export default function Home() {
             Create Hunt
           </button>
         </div>
+
+        {/* Your Games (history) */}
+        {playerGames.length > 0 && (
+          <div className="border rounded p-6 mt-6">
+            <h2 className="text-2xl font-semibold mb-4">Your Games</h2>
+            <div className="space-y-3">
+              {playerGames.map((game) => (
+                <div
+                  key={game.hunt_id}
+                  className="flex items-center justify-between p-3 border rounded"
+                >
+                  <div>
+                    <div className="font-mono font-bold text-lg">{game.hunt_code}</div>
+                    <div className="text-sm text-gray-500">
+                      {game.pack ? packLabel(game.pack) : "No pack"}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {/* Status badge */}
+                    <span
+                      className={`text-xs px-2 py-1 rounded-full ${
+                        game.hunt_status === "lobby"
+                          ? "bg-yellow-100 text-yellow-800"
+                          : game.hunt_status === "active"
+                          ? "bg-green-100 text-green-800"
+                          : "bg-gray-100 text-gray-600"
+                      }`}
+                    >
+                      {game.hunt_status}
+                    </span>
+                    {/* Actions */}
+                    {game.hunt_status !== "finished" && (
+                      <button
+                        className="px-3 py-1 bg-black text-white text-sm rounded"
+                        onClick={() => resumeGame(game.hunt_id)}
+                      >
+                        Resume
+                      </button>
+                    )}
+                    <button
+                      className="px-3 py-1 border text-sm rounded text-red-600 border-red-200 hover:bg-red-50"
+                      onClick={() => leaveGame(game.hunt_id)}
+                    >
+                      Leave
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </main>
     );
   }
