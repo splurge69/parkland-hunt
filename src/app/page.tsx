@@ -58,11 +58,6 @@ type Submission = {
   display_name: string;
 };
 
-type Vote = {
-  submission_id: string;
-  player_id: string;
-};
-
 function getFileExt(name: string) {
   const parts = name.split(".");
   return parts.length > 1 ? parts.pop()!.toLowerCase() : "jpg";
@@ -856,38 +851,42 @@ export default function Home() {
     if (hunt?.status !== "voting" || !huntId) return;
 
     (async () => {
-      // Get all submissions for this hunt with player display names
-      const { data, error } = await supabase
+      // Get all submissions for this hunt
+      const { data: submissionsData, error: submissionsError } = await supabase
         .from("submissions")
-        .select(`
-          id,
-          prompt_id,
-          player_id,
-          photo_path,
-          hunt_players!inner(display_name)
-        `)
+        .select("id, prompt_id, player_id, photo_path")
         .eq("hunt_id", huntId);
 
-      if (error) {
-        console.error("Failed to load submissions for voting:", error);
-        setError(error.message);
+      if (submissionsError) {
+        console.error("Failed to load submissions for voting:", submissionsError);
+        setError(submissionsError.message);
         return;
       }
 
-      // Transform the data to include display_name at the top level
-      const submissions: Submission[] = (data ?? []).map((s: Record<string, unknown>) => {
-        const huntPlayersJoined = s.hunt_players as unknown;
-        const displayNameValue = Array.isArray(huntPlayersJoined)
-          ? (huntPlayersJoined[0] as { display_name: string } | undefined)?.display_name
-          : (huntPlayersJoined as { display_name: string } | null)?.display_name;
-        return {
-          id: s.id as string,
-          prompt_id: s.prompt_id as string,
-          player_id: s.player_id as string,
-          photo_path: s.photo_path as string,
-          display_name: displayNameValue || "Anonymous",
-        };
+      // Get display names from hunt_players
+      const { data: playersData, error: playersError } = await supabase
+        .from("hunt_players")
+        .select("player_id, display_name")
+        .eq("hunt_id", huntId);
+
+      if (playersError) {
+        console.error("Failed to load player names:", playersError);
+      }
+
+      // Create a map of player_id to display_name
+      const playerNameMap: Record<string, string> = {};
+      (playersData ?? []).forEach((p: { player_id: string; display_name: string | null }) => {
+        playerNameMap[p.player_id] = p.display_name || "Anonymous";
       });
+
+      // Transform the data to include display_name at the top level
+      const submissions: Submission[] = (submissionsData ?? []).map((s: { id: string; prompt_id: string; player_id: string; photo_path: string }) => ({
+        id: s.id,
+        prompt_id: s.prompt_id,
+        player_id: s.player_id,
+        photo_path: s.photo_path,
+        display_name: playerNameMap[s.player_id] || "Anonymous",
+      }));
 
       setAllSubmissions(submissions);
 
@@ -939,43 +938,32 @@ export default function Home() {
     if (hunt?.status !== "finished" || !huntId) return;
 
     (async () => {
-      // Get all votes with submission and player info
-      const { data: votesData, error: votesError } = await supabase
-        .from("votes")
-        .select(`
-          id,
-          submission_id,
-          submissions!inner(
-            id,
-            prompt_id,
-            player_id,
-            photo_path,
-            hunt_players!inner(display_name)
-          )
-        `)
-        .eq("submissions.hunt_id", huntId);
-
-      if (votesError) {
-        console.error("Failed to load votes:", votesError);
-        // Try a simpler query approach
-      }
-
       // Get all submissions for this hunt
       const { data: submissionsData, error: submissionsError } = await supabase
         .from("submissions")
-        .select(`
-          id,
-          prompt_id,
-          player_id,
-          photo_path,
-          hunt_players!inner(display_name)
-        `)
+        .select("id, prompt_id, player_id, photo_path")
         .eq("hunt_id", huntId);
 
       if (submissionsError) {
         console.error("Failed to load submissions for results:", submissionsError);
         return;
       }
+
+      // Get display names from hunt_players
+      const { data: playersData, error: playersError } = await supabase
+        .from("hunt_players")
+        .select("player_id, display_name")
+        .eq("hunt_id", huntId);
+
+      if (playersError) {
+        console.error("Failed to load player names for results:", playersError);
+      }
+
+      // Create a map of player_id to display_name
+      const playerNameMap: Record<string, string> = {};
+      (playersData ?? []).forEach((p: { player_id: string; display_name: string | null }) => {
+        playerNameMap[p.player_id] = p.display_name || "Anonymous";
+      });
 
       // Get vote counts per submission
       const { data: voteCountsData, error: voteCountsError } = await supabase
@@ -1002,7 +990,7 @@ export default function Home() {
       // Build leaderboard (votes per player)
       const playerVotes: Record<string, { display_name: string; total_votes: number }> = {};
 
-      // Load photo URLs
+      // Load photo URLs and build player vote counts
       const photoUrls: Record<string, string> = {};
       for (const sub of submissionsData ?? []) {
         if (sub.photo_path) {
@@ -1015,11 +1003,7 @@ export default function Home() {
         }
 
         // Track votes per player
-        const huntPlayersData = sub.hunt_players as unknown;
-        const displayNameForPlayer = Array.isArray(huntPlayersData)
-          ? (huntPlayersData[0] as { display_name: string } | undefined)?.display_name
-          : (huntPlayersData as { display_name: string } | null)?.display_name;
-        const playerDisplayName = displayNameForPlayer || "Anonymous";
+        const playerDisplayName = playerNameMap[sub.player_id] || "Anonymous";
         const votes = voteCountMap[sub.id] || 0;
         
         if (!playerVotes[sub.player_id]) {
@@ -1039,11 +1023,7 @@ export default function Home() {
 
         for (const sub of promptSubs) {
           const votes = voteCountMap[sub.id] || 0;
-          const huntPlayersDataForSub = sub.hunt_players as unknown;
-          const subDisplayName = Array.isArray(huntPlayersDataForSub)
-            ? (huntPlayersDataForSub[0] as { display_name: string } | undefined)?.display_name
-            : (huntPlayersDataForSub as { display_name: string } | null)?.display_name;
-          const winnerDisplayName = subDisplayName || "Anonymous";
+          const winnerDisplayName = playerNameMap[sub.player_id] || "Anonymous";
           
           if (votes > maxVotes) {
             maxVotes = votes;
