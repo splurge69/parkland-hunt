@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 type Prompt = {
@@ -170,6 +170,7 @@ export default function Home() {
 
   // Hunt players (for showing who's in the hunt)
   const [huntPlayers, setHuntPlayers] = useState<HuntPlayer[]>([]);
+  const [playersRefreshing, setPlayersRefreshing] = useState(false);
 
   // Host status (for controlling game start)
   const [isHost, setIsHost] = useState(false);
@@ -268,16 +269,16 @@ export default function Home() {
 
   // Log initial state loaded from localStorage (for debugging)
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hasMounted) return;
     console.log("[Boot] Initial state from localStorage:", { playerId, playerName, huntId });
-  }, [hydrated, playerId, playerName, huntId]);
+  }, [hasMounted, playerId, playerName, huntId]);
 
   // --------------------------
   // Ensure player exists (FK-safe)
   // --------------------------
   useEffect(() => {
     // Wait for hydration before checking/creating player
-    if (!hydrated) return;
+    if (!hasMounted) return;
     
     if (creatingPlayerRef.current) {
       console.log("[Player] Skipping - already creating");
@@ -331,7 +332,7 @@ export default function Home() {
         creatingPlayerRef.current = false;
       }
     })();
-  }, [hydrated, playerId]);
+  }, [hasMounted, playerId]);
 
   // --------------------------
   // Load player's game history (only when on home screen)
@@ -376,7 +377,7 @@ export default function Home() {
     }
 
     fetchPlayerGames();
-  }, [hydrated, playerId, huntId]);
+  }, [hasMounted, playerId, huntId]);
 
   // --------------------------
   // Load available packs from packs table
@@ -536,25 +537,31 @@ export default function Home() {
   // --------------------------
   // Load all players in this hunt (with real-time updates)
   // --------------------------
+  const fetchPlayers = useCallback(async () => {
+    if (!huntId) return;
+    const { data, error } = await supabase
+      .from("hunt_players")
+      .select("id, player_id, display_name, finished_at, role")
+      .eq("hunt_id", huntId);
+
+    if (error) {
+      console.error("Failed to load hunt players:", error);
+      return;
+    }
+
+    setHuntPlayers((data ?? []) as HuntPlayer[]);
+  }, [huntId]);
+
+  async function refreshPlayers() {
+    setPlayersRefreshing(true);
+    await fetchPlayers();
+    setPlayersRefreshing(false);
+  }
+
   useEffect(() => {
     if (!huntId) {
       setHuntPlayers([]);
       return;
-    }
-
-    // Initial fetch
-    async function fetchPlayers() {
-      const { data, error } = await supabase
-        .from("hunt_players")
-        .select("id, player_id, display_name, finished_at, role")
-        .eq("hunt_id", huntId);
-
-      if (error) {
-        console.error("Failed to load hunt players:", error);
-        return;
-      }
-
-      setHuntPlayers((data ?? []) as HuntPlayer[]);
     }
 
     fetchPlayers();
@@ -580,7 +587,7 @@ export default function Home() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [huntId]);
+  }, [huntId, fetchPlayers]);
 
   // --------------------------
   // Poll hunt status when player has finished but hunt is still active
@@ -1189,12 +1196,16 @@ export default function Home() {
           const votes = voteCountMap[sub.id] || 0;
           const winnerDisplayName = playerNameMap[sub.player_id] || "Anonymous";
           
-          if (votes > maxVotes) {
+          // Only include submissions that have photos
+          if (!photoUrls[sub.id]) continue;
+          
+          // Select first submission as default, then update if another has more votes
+          if (winner === null || votes > maxVotes) {
             maxVotes = votes;
             winner = {
               display_name: winnerDisplayName,
               votes,
-              photo_url: photoUrls[sub.id] || "",
+              photo_url: photoUrls[sub.id],
             };
           }
         }
@@ -1694,6 +1705,26 @@ export default function Home() {
         <div className="mb-6">
           <div className="text-sm text-[#6B7280] mb-3 font-semibold flex items-center gap-2">
             <span>👥</span> Players ({playerCount})
+            <button
+              onClick={refreshPlayers}
+              disabled={playersRefreshing}
+              className="ml-auto p-1.5 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"
+              title="Refresh player list"
+            >
+              <svg
+                className={`w-4 h-4 text-gray-500 ${playersRefreshing ? "animate-spin" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+            </button>
           </div>
           <div className="space-y-2">
             {huntPlayers.map((p) => {
@@ -1927,81 +1958,87 @@ export default function Home() {
           </div>
         ) : (
           <>
-            {/* Leaderboard */}
-            <div className="mb-8">
-              <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-                <span>🎖️</span> Leaderboard
-              </h2>
-              <div className="space-y-3">
-                {results.leaderboard.map((player, index) => (
-                  <div
-                    key={player.player_id || index}
-                    className={`flex items-center justify-between p-4 rounded-2xl border shadow-sm ${
-                      index === 0
-                        ? "bg-amber-50 border-amber-300"
-                        : index === 1
-                        ? "bg-gray-100 border-gray-300"
-                        : index === 2
-                        ? "bg-orange-50 border-orange-300"
-                        : "bg-white border-[#E5E7EB]"
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">
-                        {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `#${index + 1}`}
-                      </span>
-                      <span className="font-semibold text-[#1B1B1B]">{player.display_name}</span>
+            {/* Leaderboard - only show if votes were cast */}
+            {results.leaderboard.some((p) => p.total_votes > 0) && (
+              <div className="mb-8">
+                <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                  <span>🎖️</span> Leaderboard
+                </h2>
+                <div className="space-y-3">
+                  {results.leaderboard.map((player, index) => (
+                    <div
+                      key={player.player_id || index}
+                      className={`flex items-center justify-between p-4 rounded-2xl border shadow-sm ${
+                        index === 0
+                          ? "bg-amber-50 border-amber-300"
+                          : index === 1
+                          ? "bg-gray-100 border-gray-300"
+                          : index === 2
+                          ? "bg-orange-50 border-orange-300"
+                          : "bg-white border-[#E5E7EB]"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">
+                          {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `#${index + 1}`}
+                        </span>
+                        <span className="font-semibold text-[#1B1B1B]">{player.display_name}</span>
+                      </div>
+                      <div className="text-lg font-bold text-[#2D6A4F]">
+                        {player.total_votes} vote{player.total_votes !== 1 ? "s" : ""}
+                      </div>
                     </div>
-                    <div className="text-lg font-bold text-[#2D6A4F]">
-                      {player.total_votes} vote{player.total_votes !== 1 ? "s" : ""}
-                    </div>
-                  </div>
-                ))}
-                {results.leaderboard.length === 0 && (
-                  <div className="text-center text-[#6B7280] py-6 bg-white rounded-2xl border border-[#E5E7EB]">
-                    No votes were cast
-                  </div>
-                )}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Prompt Winners */}
+            {/* Photos */}
             <div className="mb-8">
-              <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-                <span>📸</span> Best Photos
-              </h2>
-              <div className="space-y-4">
-                {results.promptWinners.map(({ prompt, winner }) => (
-                  <div key={prompt.id} className="bg-white rounded-2xl overflow-hidden border border-[#E5E7EB] shadow-sm">
-                    <div className="p-4 bg-[#FEFAE0] border-b border-[#E5E7EB]">
-                      <div className="font-bold text-[#1B1B1B]">{prompt.text}</div>
-                    </div>
-                    {winner ? (
-                      <div>
-                        {winner.photo_url && (
-                          <img
-                            src={winner.photo_url}
-                            alt={`${winner.display_name}'s winning photo`}
-                            className="w-full h-56 object-cover"
-                          />
-                        )}
-                        <div className="p-4 flex items-center justify-between">
-                          <span className="font-semibold text-[#1B1B1B] flex items-center gap-2">
-                            <span>🏅</span> {winner.display_name}
-                          </span>
-                          <span className="text-sm font-semibold text-[#2D6A4F] bg-emerald-50 px-3 py-1 rounded-full">
-                            {winner.votes} vote{winner.votes !== 1 ? "s" : ""}
-                          </span>
+              {(() => {
+                const hasVotes = results.leaderboard.some((p) => p.total_votes > 0);
+                return (
+                  <>
+                    <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                      <span>📸</span> {hasVotes ? "Best Photos" : "Photos"}
+                    </h2>
+                    <div className="space-y-4">
+                      {results.promptWinners.map(({ prompt, winner }) => (
+                        <div key={prompt.id} className="bg-white rounded-2xl overflow-hidden border border-[#E5E7EB] shadow-sm">
+                          <div className="p-4 bg-[#FEFAE0] border-b border-[#E5E7EB]">
+                            <div className="font-bold text-[#1B1B1B]">{prompt.text}</div>
+                          </div>
+                          {winner ? (
+                            <div>
+                              {winner.photo_url && (
+                                <img
+                                  src={winner.photo_url}
+                                  alt={`${winner.display_name}'s photo`}
+                                  className="w-full h-56 object-cover"
+                                />
+                              )}
+                              <div className="p-4 flex items-center justify-between">
+                                <span className="font-semibold text-[#1B1B1B] flex items-center gap-2">
+                                  {hasVotes && <span>🏅</span>} {winner.display_name}
+                                </span>
+                                {hasVotes && winner.votes > 0 && (
+                                  <span className="text-sm font-semibold text-[#2D6A4F] bg-emerald-50 px-3 py-1 rounded-full">
+                                    {winner.votes} vote{winner.votes !== 1 ? "s" : ""}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="p-6 text-center text-[#6B7280]">
+                              No photo taken
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ) : (
-                      <div className="p-6 text-center text-[#6B7280]">
-                        No submissions for this prompt
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             {/* Return home button */}
