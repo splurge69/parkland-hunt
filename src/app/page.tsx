@@ -911,25 +911,7 @@ export default function Home() {
     })();
   }, [hunt?.status, huntId]);
 
-  // --------------------------
-  // Voting timer
-  // --------------------------
-  useEffect(() => {
-    if (hunt?.status !== "voting") return;
-
-    const timer = setInterval(() => {
-      setVotingTimeLeft((prev) => {
-        if (prev <= 1) {
-          // Auto-advance to next prompt
-          handleVotingTimeout();
-          return 5;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [hunt?.status, currentPromptIndex]);
+  // Note: Timer removed - voting is now manual (user clicks Vote or Skip)
 
   // --------------------------
   // Load results when hunt is finished
@@ -1047,17 +1029,23 @@ export default function Home() {
     })();
   }, [hunt?.status, huntId, prompts]);
 
-  function handleVotingTimeout() {
-    const currentPrompt = prompts[currentPromptIndex];
+  // Get prompts that have at least one submission
+  const promptsWithSubmissions = useMemo(() => {
+    return prompts.filter((prompt) =>
+      allSubmissions.some((s) => s.prompt_id === prompt.id)
+    );
+  }, [prompts, allSubmissions]);
+
+  function advanceToNextPrompt() {
+    const currentPrompt = promptsWithSubmissions[currentPromptIndex];
     if (!currentPrompt) return;
 
     // Mark as voted (even if no vote cast)
     setVotedPromptIds((prev) => new Set(prev).add(currentPrompt.id));
 
     // Move to next prompt or finish
-    if (currentPromptIndex < prompts.length - 1) {
+    if (currentPromptIndex < promptsWithSubmissions.length - 1) {
       setCurrentPromptIndex((prev) => prev + 1);
-      setVotingTimeLeft(5);
     } else {
       // All prompts voted - transition to finished
       transitionToFinished();
