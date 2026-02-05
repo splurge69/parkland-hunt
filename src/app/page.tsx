@@ -653,7 +653,7 @@ export default function Home() {
   // Start game (host only)
   // --------------------------
   async function startGame() {
-    if (!huntId || !isHost) return;
+    if (!huntId) return;
 
     const { error } = await supabase
       .from("hunts")
@@ -840,21 +840,15 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Start button or waiting message */}
+        {/* Start button */}
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t">
           <div className="max-w-xl mx-auto p-4">
-            {isHost ? (
-              <button
-                className="w-full py-4 bg-green-600 text-white rounded font-semibold text-lg"
-                onClick={startGame}
-              >
-                Start Game
-              </button>
-            ) : (
-              <div className="text-center py-4 text-gray-500">
-                Waiting for host to start the game...
-              </div>
-            )}
+            <button
+              className="w-full py-4 bg-green-600 text-white rounded font-semibold text-lg"
+              onClick={startGame}
+            >
+              Start Game
+            </button>
           </div>
         </div>
       </main>
