@@ -158,7 +158,6 @@ export default function Home() {
   const [allSubmissions, setAllSubmissions] = useState<Submission[]>([]);
   const [currentPromptIndex, setCurrentPromptIndex] = useState(0);
   const [votedPromptIds, setVotedPromptIds] = useState<Set<string>>(new Set());
-  const [votingTimeLeft, setVotingTimeLeft] = useState(5);
   const [submissionUrls, setSubmissionUrls] = useState<Record<string, string>>({});
 
   // Results state
@@ -402,43 +401,42 @@ export default function Home() {
         .eq("player_id", playerId)
         .single();
 
-      // Only insert if not already a member
       if (!existing) {
-        const { error: insertError } = await supabase
+        // Use upsert to handle race conditions (requires unique constraint on hunt_id, player_id)
+        const { error: upsertError } = await supabase
           .from("hunt_players")
-          .insert({
-            hunt_id: huntId,
-            player_id: playerId,
-            display_name: playerName || "Anonymous",
-            role: "player",
-          });
+          .upsert(
+            {
+              hunt_id: huntId,
+              player_id: playerId,
+              display_name: playerName || "Anonymous",
+              role: "player",
+            },
+            { onConflict: "hunt_id,player_id", ignoreDuplicates: true }
+          );
 
-        if (insertError) {
-          console.error("Failed to join hunt:", insertError);
-          setError(insertError.message);
+        if (upsertError) {
+          console.error("Failed to join hunt:", upsertError);
+          setError(upsertError.message);
           return;
         }
-
-        // Fetch the newly inserted row
-        const { data: newRow, error: fetchError } = await supabase
-          .from("hunt_players")
-          .select("finished_at, role")
-          .eq("hunt_id", huntId)
-          .eq("player_id", playerId)
-          .single();
-
-        if (fetchError) {
-          console.error("Failed to load player data:", fetchError);
-          return;
-        }
-
-        setFinishedAt(newRow?.finished_at ?? null);
-        setIsHost(newRow?.role === "host");
-      } else {
-        // Already a member, just use the existing data
-        setFinishedAt(existing.finished_at ?? null);
-        setIsHost(existing.role === "host");
       }
+
+      // Always fetch fresh data to ensure we have the correct state
+      const { data: playerData, error: fetchError } = await supabase
+        .from("hunt_players")
+        .select("finished_at, role")
+        .eq("hunt_id", huntId)
+        .eq("player_id", playerId)
+        .single();
+
+      if (fetchError) {
+        console.error("Failed to load player data:", fetchError);
+        return;
+      }
+
+      setFinishedAt(playerData?.finished_at ?? null);
+      setIsHost(playerData?.role === "host");
     })();
   }, [huntId, playerId]);
 
@@ -907,7 +905,6 @@ export default function Home() {
       // Reset voting state
       setCurrentPromptIndex(0);
       setVotedPromptIds(new Set());
-      setVotingTimeLeft(5);
     })();
   }, [hunt?.status, huntId]);
 
@@ -1068,7 +1065,7 @@ export default function Home() {
     setHunt((prev) => (prev ? { ...prev, status: "finished" } : prev));
   }
 
-  async function castVote(submissionId: string, promptId: string) {
+  async function castVote(submissionId: string) {
     if (!playerId) return;
 
     // Insert vote into database
@@ -1084,17 +1081,8 @@ export default function Home() {
       return;
     }
 
-    // Mark this prompt as voted
-    setVotedPromptIds((prev) => new Set(prev).add(promptId));
-
-    // Move to next prompt or finish
-    if (currentPromptIndex < prompts.length - 1) {
-      setCurrentPromptIndex((prev) => prev + 1);
-      setVotingTimeLeft(5);
-    } else {
-      // All prompts voted - transition to finished
-      transitionToFinished();
-    }
+    // Mark this prompt as voted and advance
+    advanceToNextPrompt();
   }
 
   // --------------------------
@@ -1418,7 +1406,25 @@ export default function Home() {
   // Voting UI
   // --------------------------
   if (hunt?.status === "voting") {
-    const currentPrompt = prompts[currentPromptIndex];
+    // If no prompts have submissions, go straight to results
+    if (promptsWithSubmissions.length === 0) {
+      return (
+        <main className="p-6 max-w-xl mx-auto">
+          <h1 className="text-4xl font-bold mb-4">Voting</h1>
+          <div className="text-center py-8 text-gray-500">
+            No photos were submitted. Finishing hunt...
+          </div>
+          <button
+            className="w-full py-4 bg-black text-white rounded"
+            onClick={transitionToFinished}
+          >
+            View Results
+          </button>
+        </main>
+      );
+    }
+
+    const currentPrompt = promptsWithSubmissions[currentPromptIndex];
     const promptSubmissions = allSubmissions.filter(
       (s) => s.prompt_id === currentPrompt?.id
     );
@@ -1428,7 +1434,7 @@ export default function Home() {
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-4xl font-bold">Voting</h1>
           <div className="text-sm text-gray-500">
-            {currentPromptIndex + 1} / {prompts.length}
+            {currentPromptIndex + 1} / {promptsWithSubmissions.length}
           </div>
         </div>
 
@@ -1438,77 +1444,60 @@ export default function Home() {
           </div>
         )}
 
-        {/* Timer */}
-        <div className="mb-6 text-center">
-          <div
-            className={`text-6xl font-bold ${
-              votingTimeLeft <= 2 ? "text-red-500" : "text-gray-800"
-            }`}
-          >
-            {votingTimeLeft}
-          </div>
-          <div className="text-sm text-gray-500">seconds to vote</div>
-        </div>
-
         {/* Current prompt */}
         {currentPrompt && (
           <div className="mb-6 p-4 bg-gray-50 rounded border text-center">
+            <div className="text-sm text-gray-500 mb-1">Vote for the best photo of:</div>
             <div className="text-lg font-semibold">{currentPrompt.text}</div>
           </div>
         )}
 
         {/* Photo gallery for this prompt */}
         <div className="space-y-4">
-          {promptSubmissions.length === 0 ? (
-            <div className="text-center text-gray-500 py-8">
-              No submissions for this prompt
-            </div>
-          ) : (
-            promptSubmissions.map((submission) => {
-              const isOwnSubmission = submission.player_id === playerId;
-              const hasVoted = votedPromptIds.has(currentPrompt?.id ?? "");
+          {promptSubmissions.map((submission) => {
+            const isOwnSubmission = submission.player_id === playerId;
+            const hasVoted = votedPromptIds.has(currentPrompt?.id ?? "");
 
-              return (
-                <div
-                  key={submission.id}
-                  className={`border rounded overflow-hidden ${
-                    isOwnSubmission ? "opacity-50" : ""
-                  }`}
-                >
-                  {submissionUrls[submission.id] && (
-                    <img
-                      src={submissionUrls[submission.id]}
-                      alt={`${submission.display_name}'s photo`}
-                      className="w-full h-48 object-cover"
-                    />
+            return (
+              <div
+                key={submission.id}
+                className={`border rounded overflow-hidden ${
+                  isOwnSubmission ? "opacity-50" : ""
+                }`}
+              >
+                {submissionUrls[submission.id] && (
+                  <img
+                    src={submissionUrls[submission.id]}
+                    alt={`${submission.display_name}'s photo`}
+                    className="w-full h-48 object-cover"
+                  />
+                )}
+                <div className="p-3 flex items-center justify-between bg-white">
+                  <span className="font-medium">{submission.display_name}</span>
+                  {!isOwnSubmission && !hasVoted && (
+                    <button
+                      className="px-4 py-2 bg-green-600 text-white rounded"
+                      onClick={() => castVote(submission.id)}
+                    >
+                      Vote
+                    </button>
                   )}
-                  <div className="p-3 flex items-center justify-between bg-white">
-                    <span className="font-medium">{submission.display_name}</span>
-                    {!isOwnSubmission && !hasVoted && (
-                      <button
-                        className="px-4 py-2 bg-green-600 text-white rounded"
-                        onClick={() => castVote(submission.id, currentPrompt?.id ?? "")}
-                      >
-                        Vote
-                      </button>
-                    )}
-                    {isOwnSubmission && (
-                      <span className="text-sm text-gray-400">Your photo</span>
-                    )}
-                  </div>
+                  {isOwnSubmission && (
+                    <span className="text-sm text-gray-400">Your photo</span>
+                  )}
                 </div>
-              );
-            })
-          )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Skip button */}
         <div className="mt-6">
           <button
             className="w-full py-3 border border-gray-300 rounded text-gray-600"
-            onClick={handleVotingTimeout}
+            onClick={advanceToNextPrompt}
           >
-            Skip
+            Skip this prompt
           </button>
         </div>
       </main>
