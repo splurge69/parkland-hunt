@@ -2130,8 +2130,8 @@ export default function Home() {
       } : undefined}
     >
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl sm:text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
-          <span>📸</span> Photo Hunt
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-[#2D6A4F]">
+          {hunt?.pack ? getPackName(hunt.pack) : "Photo Hunt"}
         </h1>
         <button 
           className="text-sm text-[#6B7280] hover:text-[#E07A5F] transition-colors" 
@@ -2140,16 +2140,6 @@ export default function Home() {
           ← Leave
         </button>
       </div>
-
-      {hunt?.pack && (
-        <div className="mb-4 p-4 bg-white rounded-2xl border border-[#E5E7EB] shadow-sm">
-          <div className="text-xs text-[#6B7280] uppercase tracking-wider">Pack</div>
-          <div className="font-bold text-[#1B1B1B]">{getPackName(hunt.pack)}</div>
-          {getPackDescription(hunt.pack) && (
-            <div className="text-sm text-[#6B7280] mt-1">{getPackDescription(hunt.pack)}</div>
-          )}
-        </div>
-      )}
 
       {/* Players in hunt */}
       {playerCount > 0 && (
@@ -2193,7 +2183,7 @@ export default function Home() {
                 <span className="text-emerald-700">All done!</span>
               ) : (
                 <>
-                  <span className="font-bold text-[#1B1B1B]">{remaining}</span> to go!
+                  <span className="font-bold text-[#1B1B1B]"></span>You have <span>{remaining}</span> photos to go!
                 </>
               )}
             </span>
