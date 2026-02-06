@@ -1000,6 +1000,7 @@ export default function Home() {
     () => prompts.reduce((acc, p) => acc + (photoPathByPromptId[p.id] ? 1 : 0), 0),
     [prompts, photoPathByPromptId]
   );
+  const remaining = Math.max(0, total - completed);
 
   // --------------------------
   // Player stats
@@ -2187,10 +2188,14 @@ export default function Home() {
       {total > 0 && (
         <div className="mb-6 p-4 bg-white rounded-2xl border border-[#E5E7EB] shadow-sm">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-[#6B7280]">
-              Completed{" "}
-              <span className="font-bold text-[#1B1B1B]">{completed}</span> /{" "}
-              <span className="font-bold text-[#1B1B1B]">{total}</span>
+            <span className="text-[#6B7280] font-semibold">
+              {remaining === 0 ? (
+                <span className="text-emerald-700">All done!</span>
+              ) : (
+                <>
+                  <span className="font-bold text-[#1B1B1B]">{remaining}</span> to go!
+                </>
+              )}
             </span>
             {finishedAt ? (
               <span className="text-emerald-600 font-semibold flex items-center gap-1">
@@ -2199,13 +2204,6 @@ export default function Home() {
             ) : (
               <span className="text-[#6B7280]">In progress...</span>
             )}
-          </div>
-
-          <div className="mt-3 h-3 w-full rounded-full bg-gray-100 overflow-hidden">
-            <div
-              className="h-3 rounded-full bg-[#2D6A4F] transition-all duration-300"
-              style={{ width: total === 0 ? "0%" : `${(completed / total) * 100}%` }}
-            />
           </div>
         </div>
       )}
