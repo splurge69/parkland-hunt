@@ -1483,7 +1483,7 @@ export default function Home() {
         )}
 
         {/* Your Name */}
-        <div className="bg-white rounded-2xl p-4 sm:p-6 mb-5 shadow-md border border-[#E5E7EB] overflow-hidden">
+        <div className="bg-white rounded-2xl p-4 sm:p-6 mb-5 shadow-md border border-[#E5E7EB] overflow-hidden hidden">
           <h2 className="text-lg sm:text-xl font-bold mb-4 flex items-center gap-2">
             <span>👤</span> Your Name
           </h2>
