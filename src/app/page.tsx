@@ -53,6 +53,7 @@ type Pack = {
   radius_km: number | null;
   area: string | null;
   category: string | null;
+  cover_image: string | null;
 };
 
 type Submission = {
@@ -233,6 +234,13 @@ export default function Home() {
     return { area: pack.area, distance: pack.radius_km };
   }
 
+  // Helper to get pack cover image
+  function getPackCoverImage(slug: string | null): string | null {
+    if (!slug) return null;
+    const pack = availablePacks.find((p) => p.slug === slug);
+    return pack?.cover_image ?? null;
+  }
+
   // Helper to save player name to localStorage
   function savePlayerName(name: string) {
     setPlayerName(name);
@@ -386,7 +394,7 @@ export default function Home() {
     (async () => {
       const { data, error } = await supabase
         .from("packs")
-        .select("slug, name, description, latitude, longitude, radius_km, area, category")
+        .select("slug, name, description, latitude, longitude, radius_km, area, category, cover_image")
         .eq("enabled", true)
         .order("category")
         .order("name");
@@ -1565,6 +1573,19 @@ export default function Home() {
               )}
             </div>
           )}
+          {/* Pack cover image */}
+          {getPackCoverImage(createPack) && (
+            <div className="mt-3">
+              <img
+                src={getPackCoverImage(createPack)!}
+                alt={`${getPackName(createPack)} cover`}
+                className="w-full h-32 object-cover rounded-lg border border-[#E5E7EB]"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
+            </div>
+          )}
         </div>
 
         {/* Join a Hunt */}
@@ -2095,8 +2116,18 @@ export default function Home() {
   // --------------------------
   // Active Hunt UI
   // --------------------------
+  const coverImage = getPackCoverImage(hunt?.pack ?? null);
+  
   return (
-    <main className="p-4 sm:p-6 max-w-xl mx-auto pb-24">
+    <main 
+      className="p-4 sm:p-6 max-w-xl mx-auto pb-24 min-h-screen"
+      style={coverImage ? {
+        backgroundImage: `linear-gradient(rgba(254, 250, 224, 0.9), rgba(254, 250, 224, 0.9)), url(${coverImage})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundAttachment: 'fixed'
+      } : undefined}
+    >
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl sm:text-3xl font-extrabold text-[#2D6A4F] flex items-center gap-2">
           <span>📸</span> Photo Hunt
