@@ -136,6 +136,7 @@ export default function Home() {
 
   // #region agent log
   // Load localStorage values AFTER mount (hydration-safe)
+  // Validates stored hunt_id - clears if hunt is finished or doesn't exist
   useEffect(() => {
     const storedPlayerId = localStorage.getItem("player_id");
     const storedPlayerName = localStorage.getItem("player_name") || "";
@@ -145,8 +146,29 @@ export default function Home() {
     
     setPlayerId(storedPlayerId);
     setPlayerName(storedPlayerName);
-    setHuntId(storedHuntId);
-    setHasMounted(true);
+    
+    // Validate stored hunt_id before restoring - don't auto-rejoin finished hunts
+    if (storedHuntId) {
+      supabase
+        .from("hunts")
+        .select("status")
+        .eq("id", storedHuntId)
+        .single()
+        .then(({ data, error }) => {
+          if (error || !data || data.status === "finished") {
+            // Hunt doesn't exist or is finished - clear and start fresh
+            console.log("[Hunt Validation] Clearing stale hunt:", { error: error?.message, status: data?.status });
+            localStorage.removeItem("hunt_id");
+            setHuntId(null);
+          } else {
+            // Hunt exists and is not finished - restore it
+            setHuntId(storedHuntId);
+          }
+          setHasMounted(true);
+        });
+    } else {
+      setHasMounted(true);
+    }
   }, []);
   // #endregion
 
@@ -183,6 +205,9 @@ export default function Home() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editingNameValue, setEditingNameValue] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
+
+  // Share link state
+  const [linkCopied, setLinkCopied] = useState(false);
 
   // Voting state
   const [allSubmissions, setAllSubmissions] = useState<Submission[]>([]);
@@ -586,28 +611,45 @@ export default function Home() {
           table: "hunt_players",
           filter: `hunt_id=eq.${huntId}`,
         },
-        () => {
+        (payload) => {
           // Refetch all players on any change
+          console.log("[Realtime] hunt_players change received:", payload.eventType);
           fetchPlayers();
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        console.log("[Realtime] hunt_players subscription status:", status, err?.message);
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
   }, [huntId, fetchPlayers]);
 
+  // Polling fallback for player list in lobby (in case Realtime doesn't work)
+  useEffect(() => {
+    if (!huntId || hunt?.status !== "lobby") return;
+
+    console.log("[Polling] Starting lobby player list polling as fallback");
+    const interval = setInterval(() => {
+      fetchPlayers();
+    }, 5000); // Poll every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [huntId, hunt?.status, fetchPlayers]);
+
   // --------------------------
   // Poll hunt status when player has finished but hunt is still active
   // Fallback for when Realtime subscription misses the status change
+  // This ensures all players navigate to voting even if Realtime fails
   // --------------------------
   useEffect(() => {
     if (!huntId || !finishedAt || hunt?.status !== "active") return;
 
-    console.log("[Polling] Player finished but hunt still active, starting poll");
+    console.log("[Polling] Player finished but hunt still active, starting aggressive poll");
 
-    const interval = setInterval(async () => {
+    // Poll function to check hunt status
+    const pollStatus = async () => {
       const { data } = await supabase
         .from("hunts")
         .select("status")
@@ -618,7 +660,13 @@ export default function Home() {
         console.log("[Polling] Hunt status changed to:", data.status);
         setHunt((prev) => (prev ? { ...prev, status: data.status } : null));
       }
-    }, 3000); // Poll every 3 seconds
+    };
+
+    // Poll immediately on mount (don't wait for first interval)
+    pollStatus();
+
+    // Then poll every 2 seconds for faster transition
+    const interval = setInterval(pollStatus, 2000);
 
     return () => clearInterval(interval);
   }, [huntId, finishedAt, hunt?.status]);
@@ -738,9 +786,9 @@ export default function Home() {
   // --------------------------
   // Create / Join actions
   // --------------------------
-  async function joinHuntByCode() {
+  async function joinHuntByCode(codeOverride?: string) {
     setError(null);
-    const code = joinCode.trim().toUpperCase();
+    const code = (codeOverride ?? joinCode).trim().toUpperCase();
     if (!code) return;
 
     const { data, error } = await supabase
@@ -757,6 +805,20 @@ export default function Home() {
     localStorage.setItem("hunt_id", data.id);
     setHuntId(data.id);
   }
+
+  // Check URL for ?code= query param and auto-join
+  useEffect(() => {
+    if (!hasMounted || !playerId) return;
+    
+    const params = new URLSearchParams(window.location.search);
+    const codeFromUrl = params.get("code");
+    if (codeFromUrl && !huntId) {
+      joinHuntByCode(codeFromUrl);
+      // Clean URL after joining
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMounted, playerId, huntId]);
 
   async function createHunt() {
     setError(null);
@@ -840,9 +902,7 @@ export default function Home() {
     setIsHost(true);
     localStorage.setItem("hunt_id", newHuntId);
     setHuntId(newHuntId);
-
-    // show the code to copy (simple MVP: alert)
-    alert(`Hunt created! Code: ${code}`);
+    // Hunt created - the lobby UI will show share options
   }
 
   function changeHunt() {
@@ -857,6 +917,55 @@ export default function Home() {
     setFinishedAt(null);
     setHuntPlayers([]);
     setIsHost(false);
+  }
+
+  // --------------------------
+  // Share hunt helpers
+  // --------------------------
+  function getShareUrl(code: string) {
+    return `${window.location.origin}?code=${code}`;
+  }
+
+  async function copyShareLink() {
+    if (!hunt?.code) return;
+    const url = getShareUrl(hunt.code);
+    try {
+      await navigator.clipboard.writeText(url);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch (err) {
+      // Fallback for older browsers
+      const textArea = document.createElement("textarea");
+      textArea.value = url;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textArea);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    }
+  }
+
+  async function shareHunt() {
+    if (!hunt?.code) return;
+    const url = getShareUrl(hunt.code);
+    const shareData = {
+      title: "Join my Photo Hunt!",
+      text: `Join my Photo Hunt game! Code: ${hunt.code}`,
+      url: url,
+    };
+    
+    if (navigator.share && navigator.canShare?.(shareData)) {
+      try {
+        await navigator.share(shareData);
+      } catch (err) {
+        // User cancelled or share failed - fall back to copy
+        copyShareLink();
+      }
+    } else {
+      // Web Share API not supported - copy link instead
+      copyShareLink();
+    }
   }
 
   // --------------------------
@@ -933,18 +1042,28 @@ export default function Home() {
     return data.id;
   }
 
-  async function onPromptClick(promptId: string) {
+  function onPromptClick(promptId: string) {
     // #region agent log
     console.log('[DEBUG-CLICK]',{promptId,existingSubmissionId:submissionIdByPromptId[promptId],allSubmissionIds:Object.keys(submissionIdByPromptId),status:statusByPromptId[promptId],timestamp:Date.now()});
     fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:onPromptClick',message:'Prompt clicked',data:{promptId,existingSubmissionId:submissionIdByPromptId[promptId],allSubmissionIds:Object.keys(submissionIdByPromptId),status:statusByPromptId[promptId]},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,C'})}).catch(()=>{});
     // #endregion
-    try {
-      setActivePromptId(promptId);
-      await ensureSubmission(promptId);
+    
+    setActivePromptId(promptId);
+    
+    // If submission already exists (from pre-creation), click immediately within user gesture
+    // This fixes the double-click camera issue caused by async losing the user gesture context
+    if (submissionIdByPromptId[promptId]) {
       fileInputRef.current?.click();
-    } catch (e: any) {
-      console.error("Failed on prompt click:", e);
-      setStatusByPromptId((p) => ({ ...p, [promptId]: "error" }));
+    } else {
+      // Fallback: create submission then click (may require double-click on some browsers)
+      ensureSubmission(promptId)
+        .then(() => {
+          fileInputRef.current?.click();
+        })
+        .catch((e: any) => {
+          console.error("Failed on prompt click:", e);
+          setStatusByPromptId((p) => ({ ...p, [promptId]: "error" }));
+        });
     }
   }
 
@@ -1010,6 +1129,75 @@ export default function Home() {
     () => huntPlayers.filter((p) => p.finished_at != null).length,
     [huntPlayers]
   );
+
+  // --------------------------
+  // Pre-create submissions for all prompts (called when hunt becomes active)
+  // This avoids async waits during prompt click, fixing the double-click camera issue
+  // --------------------------
+  async function preCreateSubmissions() {
+    if (!huntId || !playerId || prompts.length === 0) return;
+
+    console.log("[Submissions] Pre-creating submissions for all prompts");
+
+    // Build insert array for all prompts that don't have submissions yet
+    const promptsNeedingSubmission = prompts.filter(
+      (p) => !submissionIdByPromptId[p.id]
+    );
+
+    if (promptsNeedingSubmission.length === 0) {
+      console.log("[Submissions] All submissions already exist");
+      return;
+    }
+
+    const inserts = promptsNeedingSubmission.map((p) => ({
+      hunt_id: huntId,
+      player_id: playerId,
+      prompt_id: p.id,
+      photo_path: null,
+    }));
+
+    // Use upsert with conflict handling
+    const { error: insertError } = await supabase
+      .from("submissions")
+      .upsert(inserts, {
+        onConflict: "player_id,prompt_id",
+        ignoreDuplicates: true,
+      });
+
+    if (insertError) {
+      console.error("[Submissions] Pre-create failed:", insertError);
+      return;
+    }
+
+    // Fetch all submissions to populate the map
+    const { data: allSubmissions, error: fetchError } = await supabase
+      .from("submissions")
+      .select("id, prompt_id")
+      .eq("hunt_id", huntId)
+      .eq("player_id", playerId);
+
+    if (fetchError) {
+      console.error("[Submissions] Fetch failed:", fetchError);
+      return;
+    }
+
+    // Populate the submission ID map
+    const newMap: Record<string, string> = {};
+    (allSubmissions ?? []).forEach((s: { id: string; prompt_id: string }) => {
+      newMap[s.prompt_id] = s.id;
+    });
+
+    console.log("[Submissions] Pre-created submissions:", Object.keys(newMap).length);
+    setSubmissionIdByPromptId((prev) => ({ ...prev, ...newMap }));
+  }
+
+  // Pre-create submissions when hunt becomes active
+  useEffect(() => {
+    if (hunt?.status === "active" && huntId && playerId && prompts.length > 0) {
+      preCreateSubmissions();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hunt?.status, huntId, playerId, prompts.length]);
 
   // --------------------------
   // Start game (any player can start)
@@ -1603,7 +1791,7 @@ export default function Home() {
             />
             <button 
               className="px-4 sm:px-6 py-3 bg-[#E07A5F] hover:bg-[#C96A51] text-white font-semibold rounded-xl transition-colors shrink-0" 
-              onClick={joinHuntByCode}
+              onClick={() => joinHuntByCode()}
             >
               Join
             </button>
@@ -1736,8 +1924,39 @@ export default function Home() {
           <div className="text-sm text-emerald-200 mb-2">
             Share this code with friends
           </div>
-          <div className="text-5xl font-mono font-extrabold text-white tracking-[0.3em]">
+          <div className="text-5xl font-mono font-extrabold text-white tracking-[0.3em] mb-4">
             {hunt.code}
+          </div>
+          <div className="flex gap-3 justify-center">
+            <button
+              onClick={shareHunt}
+              className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl font-semibold transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+              </svg>
+              Share
+            </button>
+            <button
+              onClick={copyShareLink}
+              className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl font-semibold transition-colors"
+            >
+              {linkCopied ? (
+                <>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                  </svg>
+                  Copy Link
+                </>
+              )}
+            </button>
           </div>
         </div>
 
