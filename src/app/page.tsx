@@ -147,7 +147,8 @@ export default function Home() {
     setPlayerId(storedPlayerId);
     setPlayerName(storedPlayerName);
     
-    // Validate stored hunt_id before restoring - don't auto-rejoin finished hunts
+    // Validate stored hunt_id before restoring - only clear if hunt doesn't exist
+    // Allow rejoining finished hunts so players can replay and re-upload photos
     if (storedHuntId) {
       supabase
         .from("hunts")
@@ -155,13 +156,13 @@ export default function Home() {
         .eq("id", storedHuntId)
         .single()
         .then(({ data, error }) => {
-          if (error || !data || data.status === "finished") {
-            // Hunt doesn't exist or is finished - clear and start fresh
-            console.log("[Hunt Validation] Clearing stale hunt:", { error: error?.message, status: data?.status });
+          if (error || !data) {
+            // Hunt doesn't exist - clear and start fresh
+            console.log("[Hunt Validation] Clearing invalid hunt:", { error: error?.message });
             localStorage.removeItem("hunt_id");
             setHuntId(null);
           } else {
-            // Hunt exists and is not finished - restore it
+            // Hunt exists - restore it (including finished hunts for replay)
             setHuntId(storedHuntId);
           }
           setHasMounted(true);
@@ -1017,21 +1018,49 @@ export default function Home() {
 
     setStatusByPromptId((p) => ({ ...p, [promptId]: "saving" }));
 
+    // Use upsert to handle duplicates (e.g., when rejoining a hunt)
     const { data, error } = await supabase
       .from("submissions")
-      .insert({
+      .upsert({
         hunt_id: huntId,
         player_id: playerId,
         prompt_id: promptId,
         photo_path: null,
+      }, {
+        onConflict: "player_id,prompt_id",
+        ignoreDuplicates: true,  // Don't update existing rows
       })
       .select("id")
       .single();
 
+    // If upsert didn't return data (duplicate was ignored), fetch the existing submission
+    if (!data && !error) {
+      const { data: existingData, error: fetchError } = await supabase
+        .from("submissions")
+        .select("id")
+        .eq("hunt_id", huntId)
+        .eq("player_id", playerId)
+        .eq("prompt_id", promptId)
+        .single();
+
+      if (fetchError || !existingData) {
+        // #region agent log
+        console.log('[DEBUG-ERROR]',{promptId,errorCode:fetchError?.code,errorMessage:fetchError?.message,timestamp:Date.now()});
+        fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:ensureSubmission:error',message:'Fetch existing failed',data:{promptId,errorCode:fetchError?.code,errorMessage:fetchError?.message},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
+        // #endregion
+        setStatusByPromptId((p) => ({ ...p, [promptId]: "error" }));
+        throw fetchError || new Error("Failed to fetch existing submission");
+      }
+
+      setSubmissionIdByPromptId((p) => ({ ...p, [promptId]: existingData.id }));
+      setStatusByPromptId((p) => ({ ...p, [promptId]: "needs_photo" }));
+      return existingData.id;
+    }
+
     if (error) {
       // #region agent log
       console.log('[DEBUG-ERROR]',{promptId,errorCode:error.code,errorMessage:error.message,timestamp:Date.now()});
-      fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:ensureSubmission:error',message:'Insert failed',data:{promptId,errorCode:error.code,errorMessage:error.message},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7243/ingest/b4d31514-afef-4068-80a9-b9e65e3b63bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:ensureSubmission:error',message:'Upsert failed',data:{promptId,errorCode:error.code,errorMessage:error.message},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
       // #endregion
       setStatusByPromptId((p) => ({ ...p, [promptId]: "error" }));
       throw error;
